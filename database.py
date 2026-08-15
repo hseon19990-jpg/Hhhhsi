@@ -38,7 +38,7 @@ def init_db():
         )
     ''')
     
-    # جدول الإعدادات
+    # جدول الإعدادات (تم التعديل)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -46,9 +46,9 @@ def init_db():
         )
     ''')
     
-    # إضافة إعدادات افتراضية
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("timer", "60"))
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("status", "true"))
+    # إضافة إعدادات افتراضية (تم التعديل)
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('timer', '60')")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('status', 'true')")
     
     conn.commit()
     conn.close()
@@ -159,16 +159,27 @@ def delete_all_groups():
 
 # ========== دوال الإعدادات ==========
 def get_setting(key):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else None
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    except sqlite3.OperationalError:
+        # إذا كان الجدول غير موجود، ننشئه
+        init_db()
+        return get_setting(key)
 
 def set_setting(key, value):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.OperationalError:
+        # إذا كان الجدول غير موجود، ننشئه
+        init_db()
+        return set_setting(key, value)
