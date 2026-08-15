@@ -1,9 +1,3 @@
-"""
-نظام جلسات متطور للبوت
-يدعم: StringSession, JSON, SQLite, Hex+DC, TData
-مع أمان كامل وتدوير تلقائي
-"""
-
 import asyncio
 import base64
 import json
@@ -14,11 +8,17 @@ from typing import Optional, Tuple, Dict, Any
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import (
-    FloodWaitError, PhoneCodeInvalidError, PhoneCodeExpiredError,
-    PhoneNumberInvalidError, SessionPasswordNeededError,
-    PasswordHashInvalidError, AuthKeyUnregisteredError,
-    AuthKeyDuplicatedError, SessionRevokedError,
-    UserDeactivatedError, AccountBannedError
+    FloodWaitError,
+    PhoneCodeInvalidError,
+    PhoneCodeExpiredError,
+    PhoneNumberInvalidError,
+    SessionPasswordNeededError,
+    PasswordHashInvalidError,
+    AuthKeyUnregisteredError,
+    AuthKeyDuplicatedError,
+    SessionRevokedError,
+    UserDeactivatedError,
+    # AccountBannedError غير موجود في هذا الإصدار
 )
 from telethon.tl.functions.account import (
     GetAuthorizationsRequest,
@@ -29,7 +29,7 @@ from telethon.tl.functions.account import (
 )
 from telethon.tl.functions.auth import ResetAuthorizationsRequest as AuthResetRequest
 from telethon.password import compute_check
-from config import API_ID, API_HASH, OWNER_FIXED_2FA_PASSWORD
+from config import API_ID, API_HASH
 import database
 import logging
 
@@ -47,10 +47,7 @@ _TG_DC = {
 # ==================== أدوات التحويل ====================
 
 def pyrogram_json_to_telethon(data: Dict[str, Any]) -> Optional[str]:
-    """
-    تحويل صيغة Pyrogram JSON إلى Telethon StringSession
-    البيانات المتوقعة: {dc_id: int, auth_key: str (hex)}
-    """
+    """تحويل صيغة Pyrogram JSON إلى Telethon StringSession"""
     try:
         dc_id = int(data.get("dc_id", 0))
         auth_hex = data.get("auth_key", "").strip()
@@ -76,75 +73,8 @@ def pyrogram_json_to_telethon(data: Dict[str, Any]) -> Optional[str]:
         logger.error(f"تحويل Pyrogram فشل: {e}")
         return None
 
-def tdata_to_telethon(tdata_path: str) -> Optional[str]:
-    """
-    تحويل مجلد TData (تيليجرام القديم) إلى StringSession
-    يحتاج إلى ملفات: auth_key, dc_id, server_address, port
-    """
-    try:
-        import sqlite3
-        db_path = os.path.join(tdata_path, "usertoken")
-        if not os.path.exists(db_path):
-            # محاولة قراءة من ملفات JSON
-            return _parse_tdata_json(tdata_path)
-            
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        # قراءة بيانات الجلسة
-        cursor.execute("SELECT dc_id, auth_key, server_address, port FROM sessions LIMIT 1")
-        row = cursor.fetchone()
-        conn.close()
-        
-        if not row:
-            return None
-            
-        dc_id, auth_key, server_addr, port = row
-        if len(auth_key) != 256:
-            return None
-            
-        packed = struct.pack(
-            ">B4sH256s",
-            dc_id,
-            socket.inet_aton(server_addr),
-            port,
-            auth_key
-        )
-        return "1" + base64.urlsafe_b64encode(packed).decode("ascii")
-        
-    except Exception as e:
-        logger.error(f"تحويل TData فشل: {e}")
-        return None
-
-def _parse_tdata_json(path: str) -> Optional[str]:
-    """محاولة قراءة TData من ملفات JSON"""
-    try:
-        config_path = os.path.join(path, "config.json")
-        if not os.path.exists(config_path):
-            return None
-            
-        with open(config_path, "r") as f:
-            data = json.load(f)
-            
-        dc_id = data.get("dc_id", 0)
-        auth_key_hex = data.get("auth_key", "")
-        
-        if not auth_key_hex:
-            return None
-            
-        return pyrogram_json_to_telethon({
-            "dc_id": dc_id,
-            "auth_key": auth_key_hex
-        })
-        
-    except Exception:
-        return None
-
 def parse_session_string(session_input: Any) -> Optional[str]:
-    """
-    دالة شاملة لتحويل أي صيغة جلسة إلى StringSession
-    يدعم: JSON, Dict, String, Base64, Hex+DC
-    """
+    """تحويل أي صيغة جلسة إلى StringSession"""
     if isinstance(session_input, str):
         # محاولة تحليل JSON
         if session_input.strip().startswith("{"):
@@ -198,7 +128,7 @@ def run_async(coro):
     return loop.run_until_complete(coro)
 
 async def test_session(session_string: str) -> Tuple[bool, Optional[dict]]:
-    """اختبار صلاحية الجلسة وجلب معلومات الحساب"""
+    """اختبار صلاحية الجلسة"""
     try:
         client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
         await client.connect()
@@ -224,10 +154,7 @@ async def test_session(session_string: str) -> Tuple[bool, Optional[dict]]:
         return False, {"error": str(e)}
 
 async def send_code_sync(phone: str) -> Tuple[bool, str, Optional[str]]:
-    """
-    إرسال كود التفعيل إلى رقم الهاتف
-    يعيد: (نجاح, رسالة, phone_code_hash)
-    """
+    """إرسال كود التفعيل"""
     try:
         client = TelegramClient(StringSession(), API_ID, API_HASH)
         await client.connect()
@@ -245,10 +172,7 @@ async def send_code_sync(phone: str) -> Tuple[bool, str, Optional[str]]:
         return False, f"❌ خطأ: {str(e)}", None
 
 async def sign_in_sync(phone: str, code: str, phone_code_hash: str) -> Tuple[bool, str, Optional[str]]:
-    """
-    تسجيل الدخول باستخدام الكود
-    يعيد: (نجاح, رسالة, session_string)
-    """
+    """تسجيل الدخول باستخدام الكود"""
     try:
         client = TelegramClient(StringSession(), API_ID, API_HASH)
         await client.connect()
@@ -256,7 +180,6 @@ async def sign_in_sync(phone: str, code: str, phone_code_hash: str) -> Tuple[boo
         try:
             await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
         except SessionPasswordNeededError:
-            # طلب كلمة مرور 2FA
             await client.disconnect()
             return False, "🔒 مطلوب كلمة مرور التحقق بخطوتين", "2FA_REQUIRED"
             
@@ -289,10 +212,10 @@ async def sign_in_with_2fa(session_string: str, password: str) -> Tuple[bool, st
     except Exception as e:
         return False, f"❌ خطأ: {str(e)}"
 
-# ==================== دوال الأمان والتدوير ====================
+# ==================== دوال الأمان ====================
 
 async def kick_all_sessions(session_string: str) -> Tuple[bool, str]:
-    """طرد جميع الجلسات الأخرى من الحساب"""
+    """طرد جميع الجلسات الأخرى"""
     try:
         client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
         await client.connect()
@@ -301,10 +224,8 @@ async def kick_all_sessions(session_string: str) -> Tuple[bool, str]:
             await client.disconnect()
             return False, "الجلسة غير مصرح بها"
             
-        # طرد جميع الجلسات الأخرى
         await client(ResetAuthorizationsRequest())
         
-        # التحقق من عدد الأجهزة المتبقية
         devices = await client(GetAuthorizationsRequest())
         device_count = len(devices.authorizations) if devices else 0
         
@@ -314,260 +235,6 @@ async def kick_all_sessions(session_string: str) -> Tuple[bool, str]:
         
     except Exception as e:
         return False, str(e)
-
-async def rotate_session(session_string: str) -> Tuple[bool, str]:
-    """
-    تدوير الجلسة: إنشاء جلسة جديدة وإلغاء القديمة
-    """
-    try:
-        # 1. الاتصال بالجلسة الحالية
-        old_client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
-        await old_client.connect()
-        
-        if not await old_client.is_user_authorized():
-            await old_client.disconnect()
-            return False, "الجلسة الحالية غير صالحة"
-            
-        me = await old_client.get_me()
-        phone = me.phone
-        
-        # 2. طلب كود جديد
-        new_client = TelegramClient(StringSession(), API_ID, API_HASH)
-        await new_client.connect()
-        
-        sent = await new_client.send_code_request(phone)
-        
-        # 3. انتظار الكود من 777000 (نستقبله عبر الجلسة القديمة)
-        code = await _wait_for_code(old_client, phone)
-        
-        if not code:
-            await old_client.disconnect()
-            await new_client.disconnect()
-            return False, "لم يصل الكود خلال 30 ثانية"
-            
-        # 4. تسجيل الدخول بالجلسة الجديدة
-        await new_client.sign_in(phone, code, phone_code_hash=sent.phone_code_hash)
-        new_session = new_client.session.save()
-        
-        # 5. إلغاء الجلسة القديمة
-        await old_client.log_out()
-        
-        await old_client.disconnect()
-        await new_client.disconnect()
-        
-        return True, new_session
-        
-    except Exception as e:
-        return False, str(e)
-
-async def _wait_for_code(client, phone: str, timeout: int = 30) -> Optional[str]:
-    """انتظار كود الدخول من 777000"""
-    import re
-    
-    start_time = asyncio.get_event_loop().time()
-    while asyncio.get_event_loop().time() - start_time < timeout:
-        try:
-            messages = await client.get_messages(777000, limit=5)
-            for msg in messages:
-                if msg.text and phone in msg.text:
-                    match = re.search(r'(\d{5})', msg.text)
-                    if match:
-                        return match.group(1)
-        except:
-            pass
-        await asyncio.sleep(1)
-    return None
-
-async def enable_2fa(session_string: str, password: str = None) -> Tuple[bool, str]:
-    """
-    تفعيل التحقق بخطوتين
-    """
-    if not password:
-        password = OWNER_FIXED_2FA_PASSWORD or "محمد"
-        
-    try:
-        client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
-        await client.connect()
-        
-        if not await client.is_user_authorized():
-            await client.disconnect()
-            return False, "الجلسة غير مصرح بها"
-            
-        # التحقق من وجود 2FA
-        pwd_state = await client(GetPasswordRequest())
-        
-        if pwd_state.has_password:
-            await client.disconnect()
-            return False, "التحقق بخطوتين مفعل مسبقاً"
-            
-        # تفعيل 2FA
-        await client.edit_2fa(
-            new_password=password,
-            hint="Auto"
-        )
-        
-        await client.disconnect()
-        return True, f"تم تفعيل التحقق بخطوتين بنجاح\n🔑 كلمة المرور: `{password}`"
-        
-    except Exception as e:
-        return False, str(e)
-
-async def change_2fa(session_string: str, old_password: str, new_password: str) -> Tuple[bool, str]:
-    """تغيير كلمة مرور 2FA"""
-    try:
-        client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
-        await client.connect()
-        
-        await client.edit_2fa(
-            current_password=old_password,
-            new_password=new_password,
-            hint="Auto"
-        )
-        
-        await client.disconnect()
-        return True, "تم تغيير كلمة المرور بنجاح"
-        
-    except Exception as e:
-        return False, str(e)
-
-async def remove_2fa(session_string: str, password: str) -> Tuple[bool, str]:
-    """إزالة التحقق بخطوتين"""
-    try:
-        client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
-        await client.connect()
-        
-        await client.edit_2fa(
-            current_password=password,
-            new_password=""
-        )
-        
-        await client.disconnect()
-        return True, "تم إزالة التحقق بخطوتين"
-        
-    except Exception as e:
-        return False, str(e)
-
-# ==================== استيراد الجلسات ====================
-
-async def import_session_file(file_path: str) -> Dict[str, Any]:
-    """
-    استيراد جلسة من ملف (يدعم: .session, .json, .txt)
-    """
-    try:
-        with open(file_path, "rb") as f:
-            file_bytes = f.read()
-            
-        file_name = os.path.basename(file_path)
-        ext = os.path.splitext(file_name)[1].lower()
-        
-        if ext == ".session":
-            # ملف SQLite
-            return await _import_sqlite_session(file_bytes, file_name)
-            
-        elif ext in [".json", ".txt"]:
-            # ملف JSON أو نص
-            try:
-                text = file_bytes.decode("utf-8")
-                return await _import_text_session(text, file_name)
-            except:
-                pass
-                
-        return {"success": False, "error": "نوع الملف غير مدعوم"}
-        
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-async def _import_sqlite_session(data: bytes, filename: str) -> Dict[str, Any]:
-    """استيراد جلسة SQLite"""
-    try:
-        import tempfile
-        import sqlite3
-        
-        with tempfile.NamedTemporaryFile(suffix=".session", delete=False) as tf:
-            tf.write(data)
-            tf_path = tf.name
-            
-        conn = sqlite3.connect(tf_path)
-        cursor = conn.cursor()
-        
-        # Telethon
-        cursor.execute("SELECT dc_id, server_address, port, auth_key FROM sessions LIMIT 1")
-        row = cursor.fetchone()
-        
-        if row:
-            dc_id, server_addr, port, auth_key = row
-            if len(auth_key) == 256:
-                session = parse_session_string({
-                    "dc_id": dc_id,
-                    "auth_key": auth_key.hex()
-                })
-                conn.close()
-                os.unlink(tf_path)
-                return await _verify_and_save_session(session, filename)
-                
-        # Pyrogram
-        cursor.execute("SELECT dc_id, auth_key FROM sessions LIMIT 1")
-        row = cursor.fetchone()
-        
-        if row:
-            dc_id, auth_key = row
-            if len(auth_key) == 256:
-                session = parse_session_string({
-                    "dc_id": dc_id,
-                    "auth_key": auth_key.hex()
-                })
-                conn.close()
-                os.unlink(tf_path)
-                return await _verify_and_save_session(session, filename)
-                
-        conn.close()
-        os.unlink(tf_path)
-        return {"success": False, "error": "لم يتم العثور على بيانات جلسة صالحة"}
-        
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-async def _import_text_session(text: str, filename: str) -> Dict[str, Any]:
-    """استيراد جلسة من نص"""
-    try:
-        session = parse_session_string(text)
-        if not session:
-            return {"success": False, "error": "صيغة جلسة غير صالحة"}
-            
-        return await _verify_and_save_session(session, filename)
-        
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-async def _verify_and_save_session(session_string: str, filename: str) -> Dict[str, Any]:
-    """التحقق من الجلسة وحفظها"""
-    try:
-        # اختبار الجلسة
-        success, info = await test_session(session_string)
-        
-        if not success:
-            return {"success": False, "error": info.get("error", "جلسة غير صالحة")}
-            
-        # حفظ الجلسة
-        phone = info.get("phone")
-        if not phone:
-            return {"success": False, "error": "لم يتم العثور على رقم الهاتف"}
-            
-        # حفظ في قاعدة البيانات
-        if database.add_account(phone, session_string):
-            return {
-                "success": True,
-                "phone": phone,
-                "info": info,
-                "session": session_string
-            }
-        else:
-            return {"success": False, "error": "فشل حفظ الجلسة في قاعدة البيانات"}
-            
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-# ==================== دوال مساعدة للبوت ====================
 
 async def get_device_count(session_string: str) -> int:
     """الحصول على عدد الأجهزة المسجلة"""
@@ -637,13 +304,128 @@ async def kick_device(session_string: str, device_hash: int) -> Tuple[bool, str]
     except Exception as e:
         return False, str(e)
 
-# ==================== استيراد دفعة واحدة ====================
+# ==================== دوال الإرسال ====================
+
+async def send_message_sync(session_string: str, group_link: str, message: str) -> Tuple[bool, Any]:
+    """إرسال رسالة إلى كروب"""
+    try:
+        client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
+        await client.connect()
+        
+        if not await client.is_user_authorized():
+            await client.disconnect()
+            return False, "الجلسة غير مصرح بها"
+            
+        entity = await client.get_entity(group_link)
+        result = await client.send_message(entity, message)
+        await client.disconnect()
+        
+        return True, result
+        
+    except Exception as e:
+        return False, str(e)
+
+# ==================== استيراد الجلسات ====================
+
+async def import_session_file(file_path: str) -> Dict[str, Any]:
+    """استيراد جلسة من ملف"""
+    try:
+        with open(file_path, "rb") as f:
+            file_bytes = f.read()
+            
+        file_name = os.path.basename(file_path)
+        ext = os.path.splitext(file_name)[1].lower()
+        
+        if ext == ".session":
+            return await _import_sqlite_session(file_bytes, file_name)
+            
+        elif ext in [".json", ".txt"]:
+            try:
+                text = file_bytes.decode("utf-8")
+                return await _import_text_session(text, file_name)
+            except:
+                pass
+                
+        return {"success": False, "error": "نوع الملف غير مدعوم"}
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+async def _import_sqlite_session(data: bytes, filename: str) -> Dict[str, Any]:
+    """استيراد جلسة SQLite"""
+    try:
+        import tempfile
+        import sqlite3
+        
+        with tempfile.NamedTemporaryFile(suffix=".session", delete=False) as tf:
+            tf.write(data)
+            tf_path = tf.name
+            
+        conn = sqlite3.connect(tf_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT dc_id, server_address, port, auth_key FROM sessions LIMIT 1")
+        row = cursor.fetchone()
+        
+        if row:
+            dc_id, server_addr, port, auth_key = row
+            if len(auth_key) == 256:
+                session = parse_session_string({
+                    "dc_id": dc_id,
+                    "auth_key": auth_key.hex()
+                })
+                conn.close()
+                os.unlink(tf_path)
+                return await _verify_and_save_session(session, filename)
+                
+        conn.close()
+        os.unlink(tf_path)
+        return {"success": False, "error": "لم يتم العثور على بيانات جلسة صالحة"}
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+async def _import_text_session(text: str, filename: str) -> Dict[str, Any]:
+    """استيراد جلسة من نص"""
+    try:
+        session = parse_session_string(text)
+        if not session:
+            return {"success": False, "error": "صيغة جلسة غير صالحة"}
+            
+        return await _verify_and_save_session(session, filename)
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+async def _verify_and_save_session(session_string: str, filename: str) -> Dict[str, Any]:
+    """التحقق من الجلسة وحفظها"""
+    try:
+        success, info = await test_session(session_string)
+        
+        if not success:
+            return {"success": False, "error": info.get("error", "جلسة غير صالحة")}
+            
+        phone = info.get("phone")
+        if not phone:
+            return {"success": False, "error": "لم يتم العثور على رقم الهاتف"}
+            
+        if database.add_account(phone, session_string):
+            return {
+                "success": True,
+                "phone": phone,
+                "info": info,
+                "session": session_string
+            }
+        else:
+            return {"success": False, "error": "فشل حفظ الجلسة في قاعدة البيانات"}
+            
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ==================== استيراد دفعة ====================
 
 async def import_sessions_batch(sessions_data: list) -> Dict[str, Any]:
-    """
-    استيراد دفعة من الجلسات
-    sessions_data: قائمة من session_string أو dict
-    """
+    """استيراد دفعة من الجلسات"""
     results = {
         "total": len(sessions_data),
         "success": [],
@@ -652,7 +434,6 @@ async def import_sessions_batch(sessions_data: list) -> Dict[str, Any]:
     
     for idx, data in enumerate(sessions_data):
         try:
-            # تحويل الصيغة
             session = parse_session_string(data)
             if not session:
                 results["failed"].append({
@@ -661,7 +442,6 @@ async def import_sessions_batch(sessions_data: list) -> Dict[str, Any]:
                 })
                 continue
                 
-            # التحقق والحفظ
             result = await _verify_and_save_session(session, f"batch_{idx}")
             
             if result["success"]:
