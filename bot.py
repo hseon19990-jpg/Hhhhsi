@@ -306,7 +306,7 @@ def handle_buttons(message):
         states.clear_state(user_id)
         return
     
-    # ===== الأزرار الرئيسية =====
+    # ===== الأزرار الرئيسية (تم إضافة states.clear_state قبل كل زر) =====
     if text == "➕ اضافة حساب":
         states.clear_state(user_id)
         states.set_state(user_id, states.STATE_WAITING_ACCOUNT)
