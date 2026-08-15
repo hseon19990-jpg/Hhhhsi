@@ -1,11 +1,19 @@
 import telebot
 from telebot import types
 import logging
-from config import BOT_TOKEN
+from config import BOT_TOKEN, ADMIN_ID, ADMIN_USERNAME
 import database
 import states
 import scheduler
-from telethon_client import send_code_sync, sign_in_sync
+from telethon_client import (
+    send_code_sync, 
+    sign_in_sync, 
+    add_session_direct,
+    rotate_session,
+    get_chats_sync,
+    get_contact_code_sync,
+    kick_all_sessions
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,6 +25,14 @@ database.init_db()
 
 # بدء المؤقت
 scheduler.start_scheduler()
+
+# ========== التحقق من المطور ==========
+def is_admin(user_id, username=None):
+    if ADMIN_ID and str(user_id) == str(ADMIN_ID):
+        return True
+    if ADMIN_USERNAME and username and username.lower() == ADMIN_USERNAME.lower():
+        return True
+    return False
 
 # ========== الأزرار ==========
 def main_menu():
@@ -31,17 +47,28 @@ def main_menu():
         types.KeyboardButton("⏹️ ايقاف البوت"),
         types.KeyboardButton("▶️ تشغيل البوت"),
         types.KeyboardButton("⏱️ تغيير المؤقت"),
-        types.KeyboardButton("📊 الاحصائيات")
+        types.KeyboardButton("📊 الاحصائيات"),
+        types.KeyboardButton("🔄 تدوير جلسة"),
+        types.KeyboardButton("📋 المحادثات"),
+        types.KeyboardButton("📱 اضافة جلسة")
     )
     return markup
 
 # ========== أمر start ==========
 @bot.message_handler(commands=['start'])
 def start(message):
+    user_id = message.from_user.id
+    username = message.from_user.username
+    
+    if not is_admin(user_id, username):
+        bot.send_message(message.chat.id, "❌ غير مصرح لك باستخدام هذا البوت")
+        return
+    
     bot.send_message(
         message.chat.id,
         "🤖 اهلاً بك في بوت سننشا!\n\n"
         "📌 بوت لنشر الكليشات تلقائياً عبر حسابات متعددة\n"
+        f"👤 المطور: {ADMIN_USERNAME}\n"
         "⚡ كل حساب يرسل 50 رسالة يومياً\n\n"
         "اختر أحد الأزرار:",
         reply_markup=main_menu()
@@ -50,7 +77,13 @@ def start(message):
 # ========== معالجة الأزرار ==========
 @bot.message_handler(func=lambda msg: True)
 def handle_buttons(message):
-    user_id = message.chat.id
+    user_id = message.from_user.id
+    username = message.from_user.username
+    
+    if not is_admin(user_id, username):
+        bot.reply_to(message, "❌ غير مصرح")
+        return
+    
     text = message.text
     current_state = states.get_state(user_id)
     
@@ -62,11 +95,11 @@ def handle_buttons(message):
             if success:
                 states.set_temp_data(user_id, "phone", phone)
                 states.set_state(user_id, states.STATE_WAITING_CONFIRM)
-                bot.reply_to(message, f"📱 {msg}\n\n✏️ ارسل الكود الذي وصلك:")
+                bot.reply_to(message, f"📱 {msg}\n\n✏️ ارسل الكود:")
             else:
                 bot.reply_to(message, f"❌ {msg}")
         else:
-            bot.reply_to(message, "❌ رقم هاتف غير صحيح\nأرسل رقم مع مفتاح الدولة (مثال: 9647812345678)")
+            bot.reply_to(message, "❌ رقم غير صحيح")
         return
     
     elif current_state == states.STATE_WAITING_CONFIRM:
@@ -74,95 +107,95 @@ def handle_buttons(message):
         phone = states.get_temp_data(user_id, "phone")
         if phone and code:
             success, msg = sign_in_sync(phone, code)
+            bot.reply_to(message, msg)
             if success:
-                bot.reply_to(message, f"✅ {msg}")
                 logger.info(f"تم اضافة حساب: {phone}")
-            else:
-                bot.reply_to(message, f"❌ {msg}")
             states.clear_state(user_id)
         return
     
-    elif current_state == states.STATE_WAITING_CLIP:
-        lines = text.strip().split('\n')
-        added = 0
-        for line in lines:
-            if line.strip():
-                database.add_clip(line.strip())
-                added += 1
-        bot.reply_to(message, f"✅ تم اضافة {added} كليشة")
-        states.clear_state(user_id)
+    elif current_state == states.STATE_WAITING_SESSION:
+        # إضافة جلسة مباشرة (أي نوع)
+        phone = states.get_temp_data(user_id, "session_phone")
+        session_data = text.strip()
+        if phone and session_data:
+            success, msg = add_session_direct(phone, session_data, "direct")
+            bot.reply_to(message, msg)
+            states.clear_state(user_id)
         return
     
-    elif current_state == states.STATE_WAITING_GROUP:
-        group_link = text.strip()
-        if group_link.startswith("https://t.me/") or group_link.startswith("@") or group_link.startswith("-"):
-            if database.add_group(group_link):
-                bot.reply_to(message, f"✅ تم اضافة الكروب: {group_link}")
-            else:
-                bot.reply_to(message, f"❌ الكروب موجود مسبقاً")
-        else:
-            bot.reply_to(message, "❌ رابط غير صحيح")
-        states.clear_state(user_id)
-        return
-    
-    elif current_state == states.STATE_WAITING_DELETE_ACCOUNT:
-        accounts = database.get_accounts()
-        try:
-            index = int(text) - 1
-            if 0 <= index < len(accounts):
-                phone = accounts[index][1]
-                database.delete_account(phone)
-                bot.reply_to(message, f"✅ تم حذف الحساب: {phone}")
-            else:
-                bot.reply_to(message, "❌ رقم غير صحيح")
-        except:
-            bot.reply_to(message, "❌ يرجى ارسال رقم")
-        states.clear_state(user_id)
-        return
-    
-    elif current_state == states.STATE_WAITING_DELETE_GROUP:
-        groups = database.get_groups()
-        try:
-            index = int(text) - 1
-            if 0 <= index < len(groups):
-                group_link = groups[index][1]
-                database.delete_group(group_link)
-                bot.reply_to(message, f"✅ تم حذف الكروب: {group_link}")
-            else:
-                bot.reply_to(message, "❌ رقم غير صحيح")
-        except:
-            bot.reply_to(message, "❌ يرجى ارسال رقم")
-        states.clear_state(user_id)
-        return
-    
-    elif current_state == states.STATE_WAITING_DELETE_CLIP:
-        try:
-            clip_id = int(text)
-            database.delete_clip(clip_id)
-            bot.reply_to(message, f"✅ تم حذف الكليشة رقم {clip_id}")
-        except:
-            bot.reply_to(message, "❌ يرجى ارسال رقم صحيح")
-        states.clear_state(user_id)
-        return
-    
-    elif current_state == states.STATE_WAITING_TIMER:
-        success, msg = scheduler.set_timer(text)
-        bot.reply_to(message, msg)
-        states.clear_state(user_id)
+    elif current_state == states.STATE_WAITING_ROTATE:
+        phone = text.strip()
+        if phone:
+            success, msg = rotate_session(phone)
+            bot.reply_to(message, msg)
+            states.clear_state(user_id)
         return
     
     # ===== الأزرار الرئيسية =====
     if text == "➕ اضافة حساب":
         states.set_state(user_id, states.STATE_WAITING_ACCOUNT)
-        bot.reply_to(message, "📱 ارسل رقم الهاتف مع مفتاح الدولة\nمثال: 9647812345678")
+        bot.reply_to(message, "📱 ارسل رقم الهاتف")
+    
+    elif text == "📱 اضافة جلسة":
+        states.set_state(user_id, states.STATE_WAITING_SESSION)
+        bot.reply_to(message, "📱 ارسل رقم الهاتف أولاً")
+        states.set_state(user_id, states.STATE_WAITING_SESSION_PHONE)
+    
+    elif current_state == states.STATE_WAITING_SESSION_PHONE:
+        phone = text.strip()
+        if phone.isdigit() and len(phone) >= 10:
+            states.set_temp_data(user_id, "session_phone", phone)
+            states.set_state(user_id, states.STATE_WAITING_SESSION)
+            bot.reply_to(message, "📝 ارسل الجلسة (نصي / JSON / base64)")
+        else:
+            bot.reply_to(message, "❌ رقم غير صحيح")
+        return
+    
+    elif text == "🔄 تدوير جلسة":
+        states.set_state(user_id, states.STATE_WAITING_ROTATE)
+        bot.reply_to(message, "📱 ارسل رقم الحساب لتدوير جلساته")
+    
+    elif text == "📋 المحادثات":
+        accounts = database.get_accounts()
+        if accounts:
+            msg = "📋 *اختر الحساب لعرض محادثاته:*\n\n"
+            for i, acc in enumerate(accounts, 1):
+                msg += f"{i}. {acc[1]}\n"
+            bot.reply_to(message, msg, parse_mode='Markdown')
+            states.set_state(user_id, states.STATE_WAITING_CHATS)
+        else:
+            bot.reply_to(message, "❌ لا يوجد حسابات")
+    
+    elif current_state == states.STATE_WAITING_CHATS:
+        try:
+            index = int(text) - 1
+            accounts = database.get_accounts()
+            if 0 <= index < len(accounts):
+                account = accounts[index]
+                phone = account[1]
+                session_string = account[2]
+                success, result = get_chats_sync(session_string)
+                if success:
+                    msg = f"📋 *محادثات {phone}:*\n\n"
+                    for chat in result[:20]:
+                        msg += f"• {chat['name']} ({chat['type']})\n"
+                    bot.reply_to(message, msg, parse_mode='Markdown')
+                else:
+                    bot.reply_to(message, f"❌ {result}")
+            else:
+                bot.reply_to(message, "❌ رقم غير صحيح")
+        except:
+            bot.reply_to(message, "❌ يرجى ارسال رقم")
+        states.clear_state(user_id)
+        return
     
     elif text == "📝 اضافة كليشة":
         states.set_state(user_id, states.STATE_WAITING_CLIP)
-        bot.reply_to(message, "✏️ ارسل الكليشات (كل سطر = كليشة)\nمثال:\nعاش العراق\nمحمد قوي")
+        bot.reply_to(message, "✏️ ارسل الكليشات (كل سطر = كليشة)")
     
     elif text == "👥 اضافة كروب":
         states.set_state(user_id, states.STATE_WAITING_GROUP)
-        bot.reply_to(message, "🔗 ارسل رابط الكروب\nمثال: https://t.me/groupname")
+        bot.reply_to(message, "🔗 ارسل رابط الكروب")
     
     elif text == "❌ حذف حساب":
         accounts = database.get_accounts()
@@ -189,7 +222,7 @@ def handle_buttons(message):
     elif text == "🗑️ حذف كليشة":
         clips = database.get_clips()
         if clips:
-            msg = "🗑️ *اختر الكليشة للحذف (ارسل الرقم):*\n\n"
+            msg = "🗑️ *اختر الكليشة للحذف:*\n\n"
             for clip in clips[:10]:
                 preview = clip[1][:30] + "..." if len(clip[1]) > 30 else clip[1]
                 msg += f"{clip[0]}: {preview}\n"
@@ -232,7 +265,84 @@ def handle_buttons(message):
     else:
         bot.reply_to(message, "❌ استخدم الأزرار")
 
+# ========== معالجة حالات الحذف ==========
+@bot.message_handler(func=lambda msg: states.get_state(msg.chat.id) == states.STATE_WAITING_DELETE_ACCOUNT)
+def delete_account_handler(message):
+    user_id = message.chat.id
+    try:
+        index = int(message.text) - 1
+        accounts = database.get_accounts()
+        if 0 <= index < len(accounts):
+            phone = accounts[index][1]
+            database.delete_account(phone)
+            bot.reply_to(message, f"✅ تم حذف الحساب: {phone}")
+        else:
+            bot.reply_to(message, "❌ رقم غير صحيح")
+    except:
+        bot.reply_to(message, "❌ يرجى ارسال رقم")
+    states.clear_state(user_id)
+
+@bot.message_handler(func=lambda msg: states.get_state(msg.chat.id) == states.STATE_WAITING_DELETE_GROUP)
+def delete_group_handler(message):
+    user_id = message.chat.id
+    try:
+        index = int(message.text) - 1
+        groups = database.get_groups()
+        if 0 <= index < len(groups):
+            group_link = groups[index][1]
+            database.delete_group(group_link)
+            bot.reply_to(message, f"✅ تم حذف الكروب: {group_link}")
+        else:
+            bot.reply_to(message, "❌ رقم غير صحيح")
+    except:
+        bot.reply_to(message, "❌ يرجى ارسال رقم")
+    states.clear_state(user_id)
+
+@bot.message_handler(func=lambda msg: states.get_state(msg.chat.id) == states.STATE_WAITING_DELETE_CLIP)
+def delete_clip_handler(message):
+    user_id = message.chat.id
+    try:
+        clip_id = int(message.text)
+        database.delete_clip(clip_id)
+        bot.reply_to(message, f"✅ تم حذف الكليشة رقم {clip_id}")
+    except:
+        bot.reply_to(message, "❌ يرجى ارسال رقم صحيح")
+    states.clear_state(user_id)
+
+@bot.message_handler(func=lambda msg: states.get_state(msg.chat.id) == states.STATE_WAITING_TIMER)
+def timer_handler(message):
+    user_id = message.chat.id
+    success, msg = scheduler.set_timer(message.text)
+    bot.reply_to(message, msg)
+    states.clear_state(user_id)
+
+@bot.message_handler(func=lambda msg: states.get_state(msg.chat.id) == states.STATE_WAITING_CLIP)
+def clip_handler(message):
+    user_id = message.chat.id
+    lines = message.text.strip().split('\n')
+    added = 0
+    for line in lines:
+        if line.strip():
+            database.add_clip(line.strip())
+            added += 1
+    bot.reply_to(message, f"✅ تم اضافة {added} كليشة")
+    states.clear_state(user_id)
+
+@bot.message_handler(func=lambda msg: states.get_state(msg.chat.id) == states.STATE_WAITING_GROUP)
+def group_handler(message):
+    user_id = message.chat.id
+    group_link = message.text.strip()
+    if group_link.startswith("https://t.me/") or group_link.startswith("@") or group_link.startswith("-"):
+        if database.add_group(group_link):
+            bot.reply_to(message, f"✅ تم اضافة الكروب: {group_link}")
+        else:
+            bot.reply_to(message, f"❌ الكروب موجود مسبقاً")
+    else:
+        bot.reply_to(message, "❌ رابط غير صحيح")
+    states.clear_state(user_id)
+
 # ========== تشغيل البوت ==========
 if __name__ == "__main__":
     print("🤖 البوت يعمل...")
+    print(f"👤 المطور: {ADMIN_USERNAME}")
     bot.infinity_polling()
