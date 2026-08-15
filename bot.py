@@ -1,12 +1,11 @@
 import telebot
 from telebot import types
 import logging
-import time
-import threading
 from config import BOT_TOKEN
 import database
 import states
 import scheduler
+from telethon_client import send_code_sync, sign_in_sync
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -57,60 +56,56 @@ def handle_buttons(message):
     
     # ===== معالجة الحالات =====
     if current_state == states.STATE_WAITING_ACCOUNT:
-        # استقبال رقم الهاتف
         phone = text.strip()
         if phone.isdigit() and len(phone) >= 10:
-            states.set_temp_data(user_id, "phone", phone)
-            states.set_state(user_id, states.STATE_WAITING_CONFIRM)
-            bot.reply_to(message, f"📱 تم استقبال الرقم: {phone}\n\nارسل كود التفعيل من تليجرام:")
+            success, msg = send_code_sync(phone)
+            if success:
+                states.set_temp_data(user_id, "phone", phone)
+                states.set_state(user_id, states.STATE_WAITING_CONFIRM)
+                bot.reply_to(message, f"📱 {msg}\n\n✏️ ارسل الكود الذي وصلك:")
+            else:
+                bot.reply_to(message, f"❌ {msg}")
         else:
             bot.reply_to(message, "❌ رقم هاتف غير صحيح\nأرسل رقم مع مفتاح الدولة (مثال: 9647812345678)")
         return
     
     elif current_state == states.STATE_WAITING_CONFIRM:
-        # استقبال كود التفعيل
         code = text.strip()
         phone = states.get_temp_data(user_id, "phone")
         if phone and code:
-            # هنا ستضيف كود تسجيل الدخول باستخدام Telethon
-            # حالياً نقوم بمحاكاة التسجيل
-            session_string = f"session_{phone}_{code}"  # مؤقت
-            if database.add_account(phone, session_string):
-                bot.reply_to(message, f"✅ تم اضافة الحساب: {phone}\n🔄 جارٍ تسجيل الدخول...")
+            success, msg = sign_in_sync(phone, code)
+            if success:
+                bot.reply_to(message, f"✅ {msg}")
                 logger.info(f"تم اضافة حساب: {phone}")
             else:
-                bot.reply_to(message, f"❌ الحساب {phone} موجود مسبقاً")
+                bot.reply_to(message, f"❌ {msg}")
             states.clear_state(user_id)
         return
     
     elif current_state == states.STATE_WAITING_CLIP:
-        # استقبال الكليشات (كل سطر = كليشة)
         lines = text.strip().split('\n')
         added = 0
         for line in lines:
             if line.strip():
                 database.add_clip(line.strip())
                 added += 1
-        bot.reply_to(message, f"✅ تم اضافة {added} كليشة بنجاح")
+        bot.reply_to(message, f"✅ تم اضافة {added} كليشة")
         states.clear_state(user_id)
         return
     
     elif current_state == states.STATE_WAITING_GROUP:
-        # استقبال رابط الكروب
         group_link = text.strip()
         if group_link.startswith("https://t.me/") or group_link.startswith("@") or group_link.startswith("-"):
             if database.add_group(group_link):
                 bot.reply_to(message, f"✅ تم اضافة الكروب: {group_link}")
-                logger.info(f"تم اضافة كروب: {group_link}")
             else:
-                bot.reply_to(message, f"❌ الكروب {group_link} موجود مسبقاً")
+                bot.reply_to(message, f"❌ الكروب موجود مسبقاً")
         else:
-            bot.reply_to(message, "❌ رابط غير صحيح\nأرسل رابط كروب صحيح (مثال: https://t.me/groupname)")
+            bot.reply_to(message, "❌ رابط غير صحيح")
         states.clear_state(user_id)
         return
     
     elif current_state == states.STATE_WAITING_DELETE_ACCOUNT:
-        # حذف حساب
         accounts = database.get_accounts()
         try:
             index = int(text) - 1
@@ -118,16 +113,14 @@ def handle_buttons(message):
                 phone = accounts[index][1]
                 database.delete_account(phone)
                 bot.reply_to(message, f"✅ تم حذف الحساب: {phone}")
-                logger.info(f"تم حذف حساب: {phone}")
             else:
                 bot.reply_to(message, "❌ رقم غير صحيح")
         except:
-            bot.reply_to(message, "❌ يرجى ارسال رقم صحيح")
+            bot.reply_to(message, "❌ يرجى ارسال رقم")
         states.clear_state(user_id)
         return
     
     elif current_state == states.STATE_WAITING_DELETE_GROUP:
-        # حذف كروب
         groups = database.get_groups()
         try:
             index = int(text) - 1
@@ -135,29 +128,24 @@ def handle_buttons(message):
                 group_link = groups[index][1]
                 database.delete_group(group_link)
                 bot.reply_to(message, f"✅ تم حذف الكروب: {group_link}")
-                logger.info(f"تم حذف كروب: {group_link}")
             else:
                 bot.reply_to(message, "❌ رقم غير صحيح")
         except:
-            bot.reply_to(message, "❌ يرجى ارسال رقم صحيح")
+            bot.reply_to(message, "❌ يرجى ارسال رقم")
         states.clear_state(user_id)
         return
     
     elif current_state == states.STATE_WAITING_DELETE_CLIP:
-        # حذف كليشة
-        clips = database.get_clips()
         try:
             clip_id = int(text)
             database.delete_clip(clip_id)
             bot.reply_to(message, f"✅ تم حذف الكليشة رقم {clip_id}")
-            logger.info(f"تم حذف كليشة: {clip_id}")
         except:
             bot.reply_to(message, "❌ يرجى ارسال رقم صحيح")
         states.clear_state(user_id)
         return
     
     elif current_state == states.STATE_WAITING_TIMER:
-        # تغيير المؤقت
         success, msg = scheduler.set_timer(text)
         bot.reply_to(message, msg)
         states.clear_state(user_id)
@@ -170,7 +158,7 @@ def handle_buttons(message):
     
     elif text == "📝 اضافة كليشة":
         states.set_state(user_id, states.STATE_WAITING_CLIP)
-        bot.reply_to(message, "✏️ ارسل الكليشات (كل سطر = كليشة واحدة)\nمثال:\nعاش العراق\nمحمد قوي")
+        bot.reply_to(message, "✏️ ارسل الكليشات (كل سطر = كليشة)\nمثال:\nعاش العراق\nمحمد قوي")
     
     elif text == "👥 اضافة كروب":
         states.set_state(user_id, states.STATE_WAITING_GROUP)
@@ -179,53 +167,49 @@ def handle_buttons(message):
     elif text == "❌ حذف حساب":
         accounts = database.get_accounts()
         if accounts:
-            msg = "🗑️ *اختر الحساب للحذف (ارسل الرقم):*\n\n"
+            msg = "🗑️ *اختر الحساب للحذف:*\n\n"
             for i, acc in enumerate(accounts, 1):
-                msg += f"{i}. {acc[1]} (رسائل: {acc[4] or 0})\n"
+                msg += f"{i}. {acc[1]}\n"
             bot.reply_to(message, msg, parse_mode='Markdown')
             states.set_state(user_id, states.STATE_WAITING_DELETE_ACCOUNT)
         else:
-            bot.reply_to(message, "❌ لا يوجد حسابات للحذف")
+            bot.reply_to(message, "❌ لا يوجد حسابات")
     
     elif text == "🚫 حذف كروب":
         groups = database.get_groups()
         if groups:
-            msg = "🗑️ *اختر الكروب للحذف (ارسل الرقم):*\n\n"
+            msg = "🗑️ *اختر الكروب للحذف:*\n\n"
             for i, grp in enumerate(groups, 1):
                 msg += f"{i}. {grp[1]}\n"
             bot.reply_to(message, msg, parse_mode='Markdown')
             states.set_state(user_id, states.STATE_WAITING_DELETE_GROUP)
         else:
-            bot.reply_to(message, "❌ لا يوجد كروبات للحذف")
+            bot.reply_to(message, "❌ لا يوجد كروبات")
     
     elif text == "🗑️ حذف كليشة":
         clips = database.get_clips()
         if clips:
             msg = "🗑️ *اختر الكليشة للحذف (ارسل الرقم):*\n\n"
-            for clip in clips[:10]:  # عرض أول 10 كليشات فقط
+            for clip in clips[:10]:
                 preview = clip[1][:30] + "..." if len(clip[1]) > 30 else clip[1]
                 msg += f"{clip[0]}: {preview}\n"
-            if len(clips) > 10:
-                msg += f"\n... و {len(clips) - 10} كليشات أخرى"
             bot.reply_to(message, msg, parse_mode='Markdown')
             states.set_state(user_id, states.STATE_WAITING_DELETE_CLIP)
         else:
-            bot.reply_to(message, "❌ لا يوجد كليشات للحذف")
+            bot.reply_to(message, "❌ لا يوجد كليشات")
     
     elif text == "⏹️ ايقاف البوت":
         scheduler.set_status(False)
-        bot.reply_to(message, "⏸️ *تم ايقاف البوت*\nلن يتم ارسال أي رسائل", parse_mode='Markdown')
-        logger.info("تم ايقاف البوت")
+        bot.reply_to(message, "⏸️ تم ايقاف البوت")
     
     elif text == "▶️ تشغيل البوت":
         scheduler.set_status(True)
-        bot.reply_to(message, "▶️ *تم تشغيل البوت*\nسيتم ارسال الرسائل تلقائياً", parse_mode='Markdown')
-        logger.info("تم تشغيل البوت")
+        bot.reply_to(message, "▶️ تم تشغيل البوت")
     
     elif text == "⏱️ تغيير المؤقت":
-        current_timer = scheduler.get_timer()
+        current = scheduler.get_timer()
         states.set_state(user_id, states.STATE_WAITING_TIMER)
-        bot.reply_to(message, f"⏰ *المؤقت الحالي:* {current_timer} ثانية\n\nارسل الوقت الجديد (بالثواني)\nمثال: 30", parse_mode='Markdown')
+        bot.reply_to(message, f"⏰ المؤقت الحالي: {current} ثانية\nارسل الوقت الجديد")
     
     elif text == "📊 الاحصائيات":
         accounts = database.get_accounts()
@@ -241,12 +225,12 @@ def handle_buttons(message):
             f"👥 الكروبات: {len(groups)}\n"
             f"⏱️ المؤقت: {timer} ثانية\n"
             f"📌 الحالة: {status}\n"
-            f"📨 الحد اليومي: 50 رسالة/حساب"
+            f"📨 الحد اليومي: 50 رسالة"
         )
         bot.reply_to(message, stats, parse_mode='Markdown')
     
     else:
-        bot.reply_to(message, "❌ زر غير معروف، استخدم الأزرار المتاحة")
+        bot.reply_to(message, "❌ استخدم الأزرار")
 
 # ========== تشغيل البوت ==========
 if __name__ == "__main__":
