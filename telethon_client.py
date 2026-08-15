@@ -18,16 +18,14 @@ from telethon.errors import (
     AuthKeyDuplicatedError,
     SessionRevokedError,
     UserDeactivatedError,
-    # AccountBannedError غير موجود في هذا الإصدار
 )
 from telethon.tl.functions.account import (
     GetAuthorizationsRequest,
     ResetAuthorizationRequest,
-    ResetAuthorizationsRequest,
     GetPasswordRequest,
     CheckPasswordRequest
 )
-from telethon.tl.functions.auth import ResetAuthorizationsRequest as AuthResetRequest
+from telethon.tl.functions.auth import ResetAuthorizationsRequest
 from telethon.password import compute_check
 from config import API_ID, API_HASH
 import database
@@ -76,7 +74,6 @@ def pyrogram_json_to_telethon(data: Dict[str, Any]) -> Optional[str]:
 def parse_session_string(session_input: Any) -> Optional[str]:
     """تحويل أي صيغة جلسة إلى StringSession"""
     if isinstance(session_input, str):
-        # محاولة تحليل JSON
         if session_input.strip().startswith("{"):
             try:
                 data = json.loads(session_input)
@@ -84,14 +81,12 @@ def parse_session_string(session_input: Any) -> Optional[str]:
             except:
                 pass
                 
-        # محاولة فك Base64
         try:
             decoded = base64.b64decode(session_input)
             return decoded.decode("utf-8")
         except:
             pass
             
-        # صيغة Hex:DC
         if ":" in session_input and len(session_input.split(":")) == 2:
             hex_part, dc_part = session_input.split(":")
             if len(hex_part) == 512 and dc_part.isdigit():
@@ -100,16 +95,13 @@ def parse_session_string(session_input: Any) -> Optional[str]:
                     "auth_key": hex_part
                 })
                 
-        # جلسة نصية عادية
         if len(session_input) > 10:
             return session_input
             
     elif isinstance(session_input, dict):
-        # Pyrogram JSON
         if "dc_id" in session_input and "auth_key" in session_input:
             return pyrogram_json_to_telethon(session_input)
             
-        # محاولة استخراج session_string
         for key in ["session_string", "session", "string_session"]:
             if key in session_input:
                 return parse_session_string(session_input[key])
