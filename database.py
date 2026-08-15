@@ -2,21 +2,22 @@ import sqlite3
 import os
 from config import DB_PATH
 
-# التأكد من وجود مجلد data
 if not os.path.exists("data"):
     os.makedirs("data")
 
 def init_db():
-    """إنشاء الجداول في قاعدة البيانات"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # جدول الحسابات
+    # جدول الحسابات (مع رقم الهاتف والجلسة)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS accounts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE,
-            added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            phone TEXT UNIQUE,
+            session_string TEXT,
+            added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            messages_sent INTEGER DEFAULT 0,
+            last_activity TIMESTAMP
         )
     ''')
     
@@ -33,8 +34,9 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id TEXT UNIQUE,
-            added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            group_link TEXT UNIQUE,
+            added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_active INTEGER DEFAULT 1
         )
     ''')
     
@@ -46,7 +48,17 @@ def init_db():
         )
     ''')
     
-    # إضافة إعدادات افتراضية
+    # جدول سجل الإرسال (لمنع التكرار)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS sent_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id INTEGER,
+            group_id INTEGER,
+            clip_id INTEGER,
+            sent_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('timer', '60')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('status', 'true')")
     
@@ -54,18 +66,18 @@ def init_db():
     conn.close()
 
 # ========== دوال الحسابات ==========
-def add_account(username):
+def add_account(phone, session_string):
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO accounts (username) VALUES (?)", (username,))
+        cursor.execute(
+            "INSERT INTO accounts (phone, session_string, last_activity) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            (phone, session_string)
+        )
         conn.commit()
         conn.close()
         return True
     except sqlite3.IntegrityError:
-        return False
-    except Exception as e:
-        print(f"خطأ في اضافة حساب: {e}")
         return False
 
 def get_accounts():
@@ -76,17 +88,45 @@ def get_accounts():
     conn.close()
     return data
 
-def delete_account(username):
+def get_account(phone):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM accounts WHERE username = ?", (username,))
+    cursor.execute("SELECT * FROM accounts WHERE phone = ?", (phone,))
+    data = cursor.fetchone()
+    conn.close()
+    return data
+
+def delete_account(phone):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM accounts WHERE phone = ?", (phone,))
     conn.commit()
     conn.close()
 
-def delete_all_accounts():
+def update_account_session(phone, session_string):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM accounts")
+    cursor.execute(
+        "UPDATE accounts SET session_string = ?, last_activity = CURRENT_TIMESTAMP WHERE phone = ?",
+        (session_string, phone)
+    )
+    conn.commit()
+    conn.close()
+
+def increment_messages(phone):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE accounts SET messages_sent = messages_sent + 1, last_activity = CURRENT_TIMESTAMP WHERE phone = ?",
+        (phone,)
+    )
+    conn.commit()
+    conn.close()
+
+def reset_daily_messages():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE accounts SET messages_sent = 0")
     conn.commit()
     conn.close()
 
@@ -113,47 +153,37 @@ def delete_clip(clip_id):
     conn.commit()
     conn.close()
 
-def delete_all_clips():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM clips")
-    conn.commit()
-    conn.close()
-
 # ========== دوال الكروبات ==========
-def add_group(group_id):
+def add_group(group_link):
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO groups (group_id) VALUES (?)", (group_id,))
+        cursor.execute("INSERT INTO groups (group_link) VALUES (?)", (group_link,))
         conn.commit()
         conn.close()
         return True
     except sqlite3.IntegrityError:
         return False
-    except Exception as e:
-        print(f"خطأ في اضافة كروب: {e}")
-        return False
 
 def get_groups():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM groups ORDER BY added_date DESC")
+    cursor.execute("SELECT * FROM groups WHERE is_active = 1 ORDER BY added_date DESC")
     data = cursor.fetchall()
     conn.close()
     return data
 
-def delete_group(group_id):
+def delete_group(group_link):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM groups WHERE group_id = ?", (group_id,))
+    cursor.execute("DELETE FROM groups WHERE group_link = ?", (group_link,))
     conn.commit()
     conn.close()
 
-def delete_all_groups():
+def deactivate_group(group_link):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM groups")
+    cursor.execute("UPDATE groups SET is_active = 0 WHERE group_link = ?", (group_link,))
     conn.commit()
     conn.close()
 
@@ -166,20 +196,34 @@ def get_setting(key):
         result = cursor.fetchone()
         conn.close()
         return result[0] if result else None
-    except sqlite3.OperationalError:
-        # إذا كان الجدول غير موجود، ننشئه
-        init_db()
-        return get_setting(key)
+    except:
+        return None
 
 def set_setting(key, value):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
-        conn.commit()
-        conn.close()
-        return True
-    except sqlite3.OperationalError:
-        # إذا كان الجدول غير موجود، ننشئه
-        init_db()
-        return set_setting(key, value)
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+    conn.commit()
+    conn.close()
+
+# ========== دوال سجل الإرسال ==========
+def log_sent(account_id, group_id, clip_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO sent_log (account_id, group_id, clip_id) VALUES (?, ?, ?)",
+        (account_id, group_id, clip_id)
+    )
+    conn.commit()
+    conn.close()
+
+def has_sent_today(account_id, group_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(*) FROM sent_log WHERE account_id = ? AND group_id = ? AND date(sent_date) = date('now')",
+        (account_id, group_id)
+    )
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count > 0
