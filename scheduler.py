@@ -5,10 +5,11 @@ import database
 from config import BOT_STATUS as CONFIG_STATUS
 
 # متغيرات المؤقت
-timer_seconds = int(database.get_setting("timer") or 60)
+timer_seconds = 60  # قيمة افتراضية
 is_running = False
 scheduler_thread = None
-bot_instance = None  # سيتم تعيينه من bot.py
+bot_instance = None
+last_run = None
 
 def set_bot_instance(bot):
     """تعيين كائن البوت للاستخدام في المؤقت"""
@@ -17,8 +18,16 @@ def set_bot_instance(bot):
 
 def start_scheduler():
     """بدء تشغيل المؤقت"""
-    global is_running, scheduler_thread
+    global is_running, scheduler_thread, timer_seconds
     if not is_running:
+        # محاولة قراءة المؤقت من قاعدة البيانات
+        try:
+            timer_value = database.get_setting("timer")
+            if timer_value:
+                timer_seconds = int(timer_value)
+        except:
+            timer_seconds = 60
+        
         is_running = True
         scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
         scheduler_thread.start()
@@ -32,7 +41,7 @@ def stop_scheduler():
 
 def run_scheduler():
     """حلقة المؤقت الرئيسية"""
-    global timer_seconds
+    global timer_seconds, last_run
     while is_running:
         try:
             # التحقق من حالة البوت من قاعدة البيانات
@@ -40,6 +49,7 @@ def run_scheduler():
             if status == "true":
                 print(f"🔄 تنفيذ المهام في {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                 execute_tasks()
+                last_run = datetime.now()
             else:
                 print("⏸️ البوت موقوف، انتظار...")
         except Exception as e:
@@ -83,12 +93,10 @@ def execute_tasks():
 
 def send_to_account(username, message):
     """ارسال رسالة إلى حساب (محاكاة)"""
-    # في البوت الحقيقي، ستستخدم API التليجرام
     print(f"📨 ارسال إلى {username}: {message[:50]}...")
 
 def send_to_group(group_id, message):
     """ارسال رسالة إلى كروب (محاكاة)"""
-    # في البوت الحقيقي، ستستخدم API التليجرام
     print(f"👥 ارسال إلى {group_id}: {message[:50]}...")
 
 def set_timer(seconds):
@@ -106,12 +114,16 @@ def set_timer(seconds):
 
 def get_timer():
     """الحصول على وقت المؤقت الحالي"""
+    global timer_seconds
     return timer_seconds
 
 def get_status():
     """الحصول على حالة البوت"""
-    status = database.get_setting("status")
-    return status == "true"
+    try:
+        status = database.get_setting("status")
+        return status == "true"
+    except:
+        return True
 
 def set_status(status):
     """تغيير حالة البوت"""
