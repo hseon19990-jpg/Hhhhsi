@@ -1,7 +1,6 @@
-from telethon.sync import TelegramClient
+import asyncio
+from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.tl.types import InputPhoneContact
-from telethon.tl.functions.contacts import ImportContactsRequest
 from config import API_ID, API_HASH
 import database
 import os
@@ -13,78 +12,68 @@ if not os.path.exists("sessions"):
 
 pending_codes = {}
 
-# ========== دالة استقبال أي نوع جلسة ==========
-def parse_session(session_data):
-    """تحويل أي نوع جلسة إلى StringSession"""
+# ========== دالة مساعدة لتشغيل async في thread ==========
+def run_async(coro):
+    """تشغيل دالة غير متزامنة في thread الحالي"""
     try:
-        # إذا كانت جلسة نصية عادية
-        if isinstance(session_data, str) and len(session_data) > 10:
-            return session_data
-        
-        # إذا كانت JSON
-        elif isinstance(session_data, dict):
-            return json.dumps(session_data)
-        
-        # إذا كانت base64
-        elif isinstance(session_data, str):
-            try:
-                decoded = base64.b64decode(session_data)
-                return decoded.decode('utf-8')
-            except:
-                return session_data
-        
-        # إذا كانت bytes
-        elif isinstance(session_data, bytes):
-            return session_data.decode('utf-8')
-        
-        else:
-            return str(session_data)
-    except:
-        return session_data
+        # محاولة الحصول على حلقة موجودة
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # إذا لم توجد حلقة، ننشئ واحدة جديدة
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    return loop.run_until_complete(coro)
 
 # ========== دوال الجلسات ==========
 def send_code_sync(phone):
+    """إرسال كود التفعيل"""
     try:
-        with TelegramClient(StringSession(), API_ID, API_HASH) as client:
-            result = client.send_code_request(phone)
-            pending_codes[phone] = {
-                "phone": phone,
-                "phone_code_hash": result.phone_code_hash,
-                "client_session": client.session.save()
-            }
-            return True, "✅ تم إرسال كود التفعيل"
+        async def _send_code():
+            async with TelegramClient(StringSession(), API_ID, API_HASH) as client:
+                result = await client.send_code_request(phone)
+                pending_codes[phone] = {
+                    "phone": phone,
+                    "phone_code_hash": result.phone_code_hash,
+                }
+                return result
+        
+        run_async(_send_code())
+        return True, "✅ تم إرسال كود التفعيل إلى رقم هاتفك"
     except Exception as e:
-        return False, f"❌ خطأ: {str(e)}"
+        return False, f"❌ خطأ في الإرسال: {str(e)}"
 
 def sign_in_sync(phone, code):
+    """تسجيل الدخول باستخدام الكود"""
     try:
         if phone not in pending_codes:
-            return False, "❌ لم يتم طلب كود"
+            return False, "❌ لم يتم طلب كود لهذا الرقم"
         
         data = pending_codes[phone]
         phone_code_hash = data["phone_code_hash"]
         
-        with TelegramClient(StringSession(), API_ID, API_HASH) as client:
-            client.sign_in(phone, code, phone_code_hash=phone_code_hash)
-            session_string = client.session.save()
-            
-            # إضافة الحساب مع نوع الجلسة
-            database.add_account(phone, session_string, "string")
+        async def _sign_in():
+            async with TelegramClient(StringSession(), API_ID, API_HASH) as client:
+                await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
+                session_string = client.session.save()
+                database.add_account(phone, session_string, "string")
+                return session_string
         
-        # طرد جميع الجلسات الأخرى (تدوير)
+        session = run_async(_sign_in())
+        
+        # طرد الجميع
         kick_all_sessions(phone)
         
         del pending_codes[phone]
-        return True, f"✅ تم تسجيل الدخول للحساب {phone}"
+        return True, f"✅ تم تسجيل الدخول بنجاح للحساب {phone}"
     except Exception as e:
-        return False, f"❌ خطأ: {str(e)}"
+        return False, f"❌ خطأ في التحقق: {str(e)}"
 
 def add_session_direct(phone, session_data, session_type="string"):
-    """إضافة جلسة مباشرة (أي نوع)"""
+    """إضافة جلسة مباشرة"""
     try:
         session_string = parse_session(session_data)
         if database.add_account(phone, session_string, session_type):
-            # طرد جميع الجلسات الأخرى
             kick_all_sessions(phone)
             return True, f"✅ تم اضافة الجلسة للحساب {phone}"
         return False, "❌ الحساب موجود مسبقاً"
@@ -92,14 +81,12 @@ def add_session_direct(phone, session_data, session_type="string"):
         return False, f"❌ خطأ: {str(e)}"
 
 def kick_all_sessions(phone):
-    """طرد جميع الجلسات الأخرى لنفس الرقم"""
+    """طرد جميع الجلسات الأخرى"""
     try:
         accounts = database.get_all_accounts()
         for acc in accounts:
-            if acc[1] != phone and acc[6] == 1:  # is_active = 1
-                # حفظ الجلسة القديمة كمدورة
+            if acc[1] != phone and acc[6] == 1:
                 database.save_rotated_session(acc[1], acc[2])
-                # تعطيل الحساب
                 database.deactivate_account(acc[1])
         return True
     except Exception as e:
@@ -107,64 +94,115 @@ def kick_all_sessions(phone):
         return False
 
 def rotate_session(phone):
-    """تدوير الجلسة (إنشاء جلسة جديدة)"""
+    """تدوير الجلسة"""
     try:
         account = database.get_account(phone)
         if not account:
             return False, "❌ الحساب غير موجود"
         
         old_session = account[2]
-        
-        # حفظ الجلسة القديمة
         database.save_rotated_session(phone, old_session)
         
-        # إنشاء جلسة جديدة
-        with TelegramClient(StringSession(), API_ID, API_HASH) as client:
-            client.start(phone=phone)
-            new_session = client.session.save()
-            database.update_account_session(phone, new_session, "string")
+        async def _rotate():
+            async with TelegramClient(StringSession(), API_ID, API_HASH) as client:
+                await client.start(phone=phone)
+                new_session = client.session.save()
+                database.update_account_session(phone, new_session, "string")
+                return new_session
         
+        run_async(_rotate())
         return True, f"✅ تم تدوير الجلسة للحساب {phone}"
     except Exception as e:
         return False, f"❌ خطأ: {str(e)}"
 
-def send_message_sync(session_string, group_link, message):
+def parse_session(session_data):
+    """تحويل أي نوع جلسة إلى StringSession"""
     try:
-        with TelegramClient(StringSession(session_string), API_ID, API_HASH) as client:
-            entity = client.get_entity(group_link)
-            result = client.send_message(entity, message)
-            return True, result
+        if isinstance(session_data, str) and len(session_data) > 10:
+            return session_data
+        elif isinstance(session_data, dict):
+            return json.dumps(session_data)
+        elif isinstance(session_data, str):
+            try:
+                decoded = base64.b64decode(session_data)
+                return decoded.decode('utf-8')
+            except:
+                return session_data
+        elif isinstance(session_data, bytes):
+            return session_data.decode('utf-8')
+        else:
+            return str(session_data)
+    except:
+        return session_data
+
+def send_message_sync(session_string, group_link, message):
+    """إرسال رسالة"""
+    try:
+        async def _send():
+            async with TelegramClient(StringSession(session_string), API_ID, API_HASH) as client:
+                entity = await client.get_entity(group_link)
+                result = await client.send_message(entity, message)
+                return result
+        
+        result = run_async(_send())
+        return True, result
     except Exception as e:
         return False, str(e)
 
 def get_chats_sync(session_string):
-    """الحصول على قائمة المحادثات من الحساب"""
+    """الحصول على قائمة المحادثات"""
     try:
-        with TelegramClient(StringSession(session_string), API_ID, API_HASH) as client:
-            dialogs = client.get_dialogs()
-            chats = []
-            for dialog in dialogs:
-                chats.append({
-                    "name": dialog.name,
-                    "id": dialog.id,
-                    "type": "group" if dialog.is_group else "user" if dialog.is_user else "channel"
-                })
-            return True, chats
+        async def _get_chats():
+            async with TelegramClient(StringSession(session_string), API_ID, API_HASH) as client:
+                dialogs = await client.get_dialogs()
+                chats = []
+                for dialog in dialogs:
+                    chats.append({
+                        "name": dialog.name,
+                        "id": dialog.id,
+                        "type": "group" if dialog.is_group else "user" if dialog.is_user else "channel"
+                    })
+                return chats
+        
+        chats = run_async(_get_chats())
+        return True, chats
     except Exception as e:
         return False, str(e)
 
 def get_contact_code_sync(session_string, contact_phone):
     """استخراج كود من حساب معين"""
     try:
-        with TelegramClient(StringSession(session_string), API_ID, API_HASH) as client:
-            # إضافة جهة اتصال
-            contact = InputPhoneContact(
-                client_id=0,
-                phone=contact_phone,
-                first_name="Temp",
-                last_name="Contact"
-            )
-            result = client(ImportContactsRequest([contact]))
-            return True, result
+        from telethon.tl.functions.contacts import ImportContactsRequest
+        from telethon.tl.types import InputPhoneContact
+        
+        async def _get_code():
+            async with TelegramClient(StringSession(session_string), API_ID, API_HASH) as client:
+                contact = InputPhoneContact(
+                    client_id=0,
+                    phone=contact_phone,
+                    first_name="Temp",
+                    last_name="Contact"
+                )
+                result = await client(ImportContactsRequest([contact]))
+                return result
+        
+        result = run_async(_get_code())
+        return True, result
+    except Exception as e:
+        return False, str(e)
+
+# ========== دوال إضافية للتحقق ==========
+def test_session(session_string):
+    """اختبار صلاحية الجلسة"""
+    try:
+        async def _test():
+            async with TelegramClient(StringSession(session_string), API_ID, API_HASH) as client:
+                me = await client.get_me()
+                return me
+        
+        me = run_async(_test())
+        if me:
+            return True, me
+        return False, "الجلسة غير صالحة"
     except Exception as e:
         return False, str(e)
