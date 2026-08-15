@@ -38,7 +38,7 @@ def init_db():
         )
     ''')
     
-    # جدول الإعدادات (تم التعديل)
+    # جدول الإعدادات
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -46,7 +46,7 @@ def init_db():
         )
     ''')
     
-    # إضافة إعدادات افتراضية (تم التعديل)
+    # إضافة إعدادات افتراضية
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('timer', '60')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('status', 'true')")
     
