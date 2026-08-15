@@ -2,7 +2,6 @@ import time
 import threading
 from datetime import datetime
 import database
-from config import BOT_STATUS as CONFIG_STATUS
 
 # متغيرات المؤقت
 timer_seconds = 60  # قيمة افتراضية
@@ -93,10 +92,12 @@ def execute_tasks():
 
 def send_to_account(username, message):
     """ارسال رسالة إلى حساب (محاكاة)"""
+    # في البوت الحقيقي، ستستخدم API التليجرام
     print(f"📨 ارسال إلى {username}: {message[:50]}...")
 
 def send_to_group(group_id, message):
     """ارسال رسالة إلى كروب (محاكاة)"""
+    # في البوت الحقيقي، ستستخدم API التليجرام
     print(f"👥 ارسال إلى {group_id}: {message[:50]}...")
 
 def set_timer(seconds):
