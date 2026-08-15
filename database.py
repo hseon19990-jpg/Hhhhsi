@@ -667,6 +667,30 @@ def hard_delete_group(group_link: str) -> bool:
     except Exception:
         return False
 
+# ==================== دوال الكروبات (إضافية) ====================
+
+def deactivate_group(group_link: str) -> bool:
+    """تعطيل كروب (بدلاً من حذفه)"""
+    try:
+        execute_query(
+            "UPDATE groups SET is_active = 0 WHERE group_link = ?",
+            (group_link,)
+        )
+        return True
+    except Exception:
+        return False
+
+def activate_group(group_link: str) -> bool:
+    """تفعيل كروب"""
+    try:
+        execute_query(
+            "UPDATE groups SET is_active = 1 WHERE group_link = ?",
+            (group_link,)
+        )
+        return True
+    except Exception:
+        return False
+
 # ==================== دوال الإعدادات ====================
 
 def get_setting(key: str) -> Optional[str]:
