@@ -307,7 +307,7 @@ def handle_buttons(message):
         states.clear_state(user_id)
         return
     
-    # ===== الأزرار الرئيسية (تم إضافة states.clear_state قبل كل زر) =====
+    # ===== الأزرار الرئيسية =====
     if text == "➕ اضافة حساب":
         states.clear_state(user_id)
         states.set_state(user_id, states.STATE_WAITING_ACCOUNT)
@@ -430,30 +430,45 @@ def handle_buttons(message):
         bot.reply_to(message, "❌ زر غير معروف، استخدم الأزرار المتاحة")
 
 
-# ========== تشغيل البوت (نسخة Webhook مخصصة لـ Railway) ==========
+# ========== تشغيل البوت (Webhook مع Flask لـ Railway) ==========
 if __name__ == "__main__":
+    from flask import Flask, request
+    
+    app = Flask(__name__)
     PORT = int(os.environ.get("PORT", 8443))
     
-    print("🤖 البوت يعمل...")
-    print(f"👤 المطور: {ADMIN_USERNAME}")
-    
-    # الحصول على رابط التطبيق من Railway Variables
+    # الرابط الذي وضعته في المتغيرات
     RAILWAY_URL = os.environ.get("RAILWAY_STATIC_URL")
     
+    print("🤖 البوت يعمل بنظام Webhook (مع Flask)...")
+    print(f"👤 المطور: {ADMIN_USERNAME}")
+    
+    # مسار استقبال التحديثات من تليجرام
+    @app.route('/webhook', methods=['POST'])
+    def webhook():
+        if request.method == 'POST':
+            try:
+                update = telebot.types.Update.de_json(request.get_json(force=True))
+                bot.process_new_updates([update])
+                return 'OK', 200
+            except Exception as e:
+                print(f"❌ خطأ في معالجة التحديث: {e}")
+                return 'Error', 500
+        return 'Method Not Allowed', 405
+
+    # إعداد الويب هوك مع تليجرام
     if RAILWAY_URL:
         webhook_url = f"{RAILWAY_URL}/webhook"
         try:
-            # إزالة أي ويب هوك أو بولينج قديم
             bot.remove_webhook()
-            # تعيين الويب هوك الجديد
             bot.set_webhook(url=webhook_url)
             print(f"✅ تم تعيين Webhook على: {webhook_url}")
-            # تشغيل خادم الاستقبال
-            bot.run_webhook(listen="0.0.0.0", port=PORT, url_path="/webhook")
+            
+            # تشغيل خادم Flask
+            app.run(host="0.0.0.0", port=PORT)
         except Exception as e:
             print(f"❌ خطأ في إعداد Webhook: {e}")
     else:
-        # في حال لم يتم العثور على الرابط (للتشغيل المحلي فقط)
         print("⚠️ لم يتم العثور على RAILWAY_STATIC_URL، سيتم استخدام Polling (محلياً)")
         bot.remove_webhook()
         bot.infinity_polling(timeout=20, long_polling_timeout=5, skip_pending=True)
