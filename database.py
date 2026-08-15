@@ -9,17 +9,21 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
+    # جدول الحسابات
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS accounts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             phone TEXT UNIQUE,
             session_string TEXT,
+            session_type TEXT DEFAULT 'string',
             added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             messages_sent INTEGER DEFAULT 0,
-            last_activity TIMESTAMP
+            last_activity TIMESTAMP,
+            is_active INTEGER DEFAULT 1
         )
     ''')
     
+    # جدول الكليشات
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS clips (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,6 +32,7 @@ def init_db():
         )
     ''')
     
+    # جدول الكروبات
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,6 +42,7 @@ def init_db():
         )
     ''')
     
+    # جدول الإعدادات
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -44,6 +50,7 @@ def init_db():
         )
     ''')
     
+    # جدول سجل الإرسال
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sent_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,6 +61,16 @@ def init_db():
         )
     ''')
     
+    # جدول الجلسات المهملة (المدورة)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS rotated_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            phone TEXT,
+            old_session TEXT,
+            rotated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('timer', '60')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('status', 'true')")
     
@@ -61,13 +78,13 @@ def init_db():
     conn.close()
 
 # ========== دوال الحسابات ==========
-def add_account(phone, session_string):
+def add_account(phone, session_string, session_type="string"):
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO accounts (phone, session_string, last_activity) VALUES (?, ?, CURRENT_TIMESTAMP)",
-            (phone, session_string)
+            "INSERT INTO accounts (phone, session_string, session_type, last_activity) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+            (phone, session_string, session_type)
         )
         conn.commit()
         conn.close()
@@ -76,6 +93,14 @@ def add_account(phone, session_string):
         return False
 
 def get_accounts():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM accounts WHERE is_active = 1 ORDER BY added_date DESC")
+    data = cursor.fetchall()
+    conn.close()
+    return data
+
+def get_all_accounts():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM accounts ORDER BY added_date DESC")
@@ -98,12 +123,19 @@ def delete_account(phone):
     conn.commit()
     conn.close()
 
-def update_account_session(phone, session_string):
+def deactivate_account(phone):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE accounts SET is_active = 0 WHERE phone = ?", (phone,))
+    conn.commit()
+    conn.close()
+
+def update_account_session(phone, session_string, session_type="string"):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE accounts SET session_string = ?, last_activity = CURRENT_TIMESTAMP WHERE phone = ?",
-        (session_string, phone)
+        "UPDATE accounts SET session_string = ?, session_type = ?, last_activity = CURRENT_TIMESTAMP WHERE phone = ?",
+        (session_string, session_type, phone)
     )
     conn.commit()
     conn.close()
@@ -122,6 +154,16 @@ def reset_daily_messages():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("UPDATE accounts SET messages_sent = 0")
+    conn.commit()
+    conn.close()
+
+def save_rotated_session(phone, old_session):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO rotated_sessions (phone, old_session) VALUES (?, ?)",
+        (phone, old_session)
+    )
     conn.commit()
     conn.close()
 
@@ -145,6 +187,13 @@ def delete_clip(clip_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM clips WHERE id = ?", (clip_id,))
+    conn.commit()
+    conn.close()
+
+def delete_all_clips():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM clips")
     conn.commit()
     conn.close()
 
