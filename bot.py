@@ -1,6 +1,7 @@
 import telebot
 from telebot import types
 import logging
+import time
 from config import BOT_TOKEN, ADMIN_ID, ADMIN_USERNAME
 import database
 import states
@@ -144,7 +145,6 @@ def handle_buttons(message):
             states.clear_state(user_id)
         return
     
-    # ===== معالجة الحالات الأخرى =====
     elif current_state == states.STATE_WAITING_SESSION:
         phone = states.get_temp_data(user_id, "session_phone")
         session_data = text.strip()
@@ -306,7 +306,7 @@ def handle_buttons(message):
         states.clear_state(user_id)
         return
     
-    # ===== الأزرار الرئيسية (مع clear_state قبل كل زر) =====
+    # ===== الأزرار الرئيسية =====
     if text == "➕ اضافة حساب":
         states.clear_state(user_id)
         states.set_state(user_id, states.STATE_WAITING_ACCOUNT)
@@ -432,13 +432,22 @@ def handle_buttons(message):
 if __name__ == "__main__":
     print("🤖 البوت يعمل...")
     print(f"👤 المطور: {ADMIN_USERNAME}")
+    print("📱 جاري الاتصال بخوادم تيليجرام...")
+    
+    # انتظار قليل قبل بدء polling
+    time.sleep(2)
     
     try:
+        # إزالة أي Webhook قديم
         bot.remove_webhook()
+        print("✅ تم إزالة Webhook")
+        
+        # تشغيل البوت
         bot.infinity_polling(
             timeout=20,
             long_polling_timeout=5,
-            skip_pending=True
+            skip_pending=True,
+            interval=1
         )
     except Exception as e:
         print(f"❌ خطأ: {e}")
