@@ -95,11 +95,16 @@ def handle_buttons(message):
         phone = text.strip()
         # قبول الأرقام بصيغة مختلفة
         phone_clean = phone.replace("+", "").replace(" ", "").replace("-", "")
+        
+        # التحقق من أن الرقم يحتوي على أرقام فقط وطوله مناسب
         if phone_clean.isdigit() and len(phone_clean) >= 10:
             # إضافة + إذا لم تكن موجودة
             if not phone.startswith("+"):
                 phone = "+" + phone_clean
+            
+            # محاولة إرسال الكود
             success, msg, phone_hash = send_code_sync(phone)
+            
             if success:
                 states.set_temp_data(user_id, "phone", phone)
                 states.set_temp_data(user_id, "phone_hash", phone_hash)
@@ -116,15 +121,20 @@ def handle_buttons(message):
         code = text.strip()
         phone = states.get_temp_data(user_id, "phone")
         phone_hash = states.get_temp_data(user_id, "phone_hash")
+        
         if phone and code:
             success, msg, session_string = sign_in_sync(phone, code, phone_hash)
+            
             if success:
                 # حفظ الجلسة
-                database.add_account(phone, session_string)
-                bot.reply_to(message, f"✅ {msg}\n✅ تم اضافة الحساب: {phone}")
-                logger.info(f"تم اضافة حساب: {phone}")
+                if database.add_account(phone, session_string):
+                    bot.reply_to(message, f"✅ {msg}\n✅ تم اضافة الحساب: {phone}")
+                    logger.info(f"تم اضافة حساب: {phone}")
+                else:
+                    bot.reply_to(message, f"❌ فشل حفظ الجلسة في قاعدة البيانات")
             else:
                 bot.reply_to(message, f"❌ {msg}")
+            
             states.clear_state(user_id)
         else:
             bot.reply_to(message, "❌ حدث خطأ، حاول مجدداً")
@@ -134,6 +144,7 @@ def handle_buttons(message):
     elif current_state == states.STATE_WAITING_SESSION:
         phone = states.get_temp_data(user_id, "session_phone")
         session_data = text.strip()
+        
         if phone and session_data:
             success, msg = add_session_direct(phone, session_data, "direct")
             bot.reply_to(message, msg)
@@ -145,7 +156,8 @@ def handle_buttons(message):
     
     elif current_state == states.STATE_WAITING_SESSION_PHONE:
         phone = text.strip()
-        phone_clean = phone.replace("+", "").replace(" ", "")
+        phone_clean = phone.replace("+", "").replace(" ", "").replace("-", "")
+        
         if phone_clean.isdigit() and len(phone_clean) >= 10:
             if not phone.startswith("+"):
                 phone = "+" + phone_clean
@@ -153,19 +165,20 @@ def handle_buttons(message):
             states.set_state(user_id, states.STATE_WAITING_SESSION)
             bot.reply_to(message, "📝 ارسل الجلسة (نصي / JSON / base64)")
         else:
-            bot.reply_to(message, "❌ رقم غير صحيح\nأرسل رقم الهاتف مع مفتاح الدولة")
+            bot.reply_to(message, "❌ رقم غير صحيح\nأرسل رقم الهاتف مع مفتاح الدولة (مثال: 9647812345678)")
         return
     
     elif current_state == states.STATE_WAITING_ROTATE:
         phone = text.strip()
-        phone_clean = phone.replace("+", "").replace(" ", "")
+        phone_clean = phone.replace("+", "").replace(" ", "").replace("-", "")
+        
         if phone_clean.isdigit() and len(phone_clean) >= 10:
             if not phone.startswith("+"):
                 phone = "+" + phone_clean
             success, msg = rotate_session(phone)
             bot.reply_to(message, msg)
         else:
-            bot.reply_to(message, "❌ رقم غير صحيح")
+            bot.reply_to(message, "❌ رقم غير صحيح\nأرسل رقم الهاتف مع مفتاح الدولة (مثال: 9647812345678)")
         states.clear_state(user_id)
         return
     
@@ -173,11 +186,14 @@ def handle_buttons(message):
         try:
             index = int(text) - 1
             accounts = database.get_accounts()
+            
             if 0 <= index < len(accounts):
                 account = accounts[index]
                 phone = account['phone']
                 session_string = account['session_string']
+                
                 success, result = get_chats_sync(session_string)
+                
                 if success:
                     msg = f"📋 *محادثات {phone}:*\n\n"
                     for chat in result[:20]:
@@ -189,6 +205,7 @@ def handle_buttons(message):
                 bot.reply_to(message, "❌ رقم غير صحيح")
         except Exception as e:
             bot.reply_to(message, f"❌ خطأ: {str(e)}")
+        
         states.clear_state(user_id)
         return
     
@@ -196,6 +213,7 @@ def handle_buttons(message):
         try:
             index = int(text) - 1
             accounts = database.get_accounts()
+            
             if 0 <= index < len(accounts):
                 account = accounts[index]
                 phone = account['phone']
@@ -205,6 +223,7 @@ def handle_buttons(message):
                 bot.reply_to(message, "❌ رقم غير صحيح")
         except Exception as e:
             bot.reply_to(message, f"❌ خطأ: {str(e)}")
+        
         states.clear_state(user_id)
         return
     
@@ -212,6 +231,7 @@ def handle_buttons(message):
         try:
             index = int(text) - 1
             groups = database.get_groups()
+            
             if 0 <= index < len(groups):
                 group = groups[index]
                 group_link = group['group_link']
@@ -221,6 +241,7 @@ def handle_buttons(message):
                 bot.reply_to(message, "❌ رقم غير صحيح")
         except Exception as e:
             bot.reply_to(message, f"❌ خطأ: {str(e)}")
+        
         states.clear_state(user_id)
         return
     
@@ -231,6 +252,7 @@ def handle_buttons(message):
             bot.reply_to(message, f"✅ تم حذف الكليشة رقم {clip_id}")
         except Exception as e:
             bot.reply_to(message, f"❌ خطأ: {str(e)}")
+        
         states.clear_state(user_id)
         return
     
@@ -241,22 +263,26 @@ def handle_buttons(message):
             bot.reply_to(message, msg)
         except Exception as e:
             bot.reply_to(message, f"❌ خطأ: {str(e)}")
+        
         states.clear_state(user_id)
         return
     
     elif current_state == states.STATE_WAITING_CLIP:
         lines = text.strip().split('\n')
         added = 0
+        
         for line in lines:
             if line.strip():
                 database.add_clip(line.strip())
                 added += 1
+        
         bot.reply_to(message, f"✅ تم اضافة {added} كليشة")
         states.clear_state(user_id)
         return
     
     elif current_state == states.STATE_WAITING_GROUP:
         group_link = text.strip()
+        
         if group_link.startswith("https://t.me/") or group_link.startswith("@") or group_link.startswith("-"):
             if database.add_group(group_link):
                 bot.reply_to(message, f"✅ تم اضافة الكروب: {group_link}")
@@ -264,6 +290,7 @@ def handle_buttons(message):
                 bot.reply_to(message, f"❌ الكروب موجود مسبقاً")
         else:
             bot.reply_to(message, "❌ رابط غير صحيح\nأرسل رابط كروب صحيح (مثال: https://t.me/groupname)")
+        
         states.clear_state(user_id)
         return
     
@@ -282,10 +309,12 @@ def handle_buttons(message):
     
     elif text == "📋 المحادثات":
         accounts = database.get_accounts()
+        
         if accounts:
             msg = "📋 *اختر الحساب لعرض محادثاته:*\n\n"
             for i, acc in enumerate(accounts, 1):
                 msg += f"{i}. {acc['phone']}\n"
+            
             bot.reply_to(message, msg, parse_mode='Markdown')
             states.set_state(user_id, states.STATE_WAITING_CHATS)
         else:
@@ -301,10 +330,12 @@ def handle_buttons(message):
     
     elif text == "❌ حذف حساب":
         accounts = database.get_accounts()
+        
         if accounts:
             msg = "🗑️ *اختر الحساب للحذف:*\n\n"
             for i, acc in enumerate(accounts, 1):
                 msg += f"{i}. {acc['phone']}\n"
+            
             bot.reply_to(message, msg, parse_mode='Markdown')
             states.set_state(user_id, states.STATE_WAITING_DELETE_ACCOUNT)
         else:
@@ -312,10 +343,12 @@ def handle_buttons(message):
     
     elif text == "🚫 حذف كروب":
         groups = database.get_groups()
+        
         if groups:
             msg = "🗑️ *اختر الكروب للحذف:*\n\n"
             for i, grp in enumerate(groups, 1):
                 msg += f"{i}. {grp['group_link']}\n"
+            
             bot.reply_to(message, msg, parse_mode='Markdown')
             states.set_state(user_id, states.STATE_WAITING_DELETE_GROUP)
         else:
@@ -323,11 +356,13 @@ def handle_buttons(message):
     
     elif text == "🗑️ حذف كليشة":
         clips = database.get_clips()
+        
         if clips:
             msg = "🗑️ *اختر الكليشة للحذف:*\n\n"
             for clip in clips[:10]:
                 preview = clip['text'][:30] + "..." if len(clip['text']) > 30 else clip['text']
                 msg += f"{clip['id']}: {preview}\n"
+            
             bot.reply_to(message, msg, parse_mode='Markdown')
             states.set_state(user_id, states.STATE_WAITING_DELETE_CLIP)
         else:
@@ -367,22 +402,12 @@ def handle_buttons(message):
     else:
         bot.reply_to(message, "❌ زر غير معروف، استخدم الأزرار المتاحة")
 
-# ========== معالج الأخطاء العام ==========
-@bot.message_handler(func=lambda msg: True)
-def fallback_handler(message):
-    user_id = message.from_user.id
-    current_state = states.get_state(user_id)
-    
-    # إذا كانت الحالة STATE_NONE، نعرض القائمة
-    if current_state == states.STATE_NONE:
-        bot.reply_to(message, "❌ استخدم الأزرار للتحكم بالبوت")
-    else:
-        bot.reply_to(message, "⚠️ يرجى اتباع التعليمات أو استخدام /start للرجوع للقائمة")
-
 # ========== تشغيل البوت ==========
 if __name__ == "__main__":
     print("🤖 البوت يعمل...")
     print(f"👤 المطور: {ADMIN_USERNAME}")
+    print("📱 انتظر الأوامر...")
+    
     try:
         bot.infinity_polling(timeout=10, long_polling_timeout=5)
     except Exception as e:
