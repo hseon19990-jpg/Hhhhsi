@@ -1,9 +1,10 @@
 import time
 import threading
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
 import database
 from config import MAX_MESSAGES_PER_DAY
+from telethon_client import send_message_sync
 
 timer_seconds = 60
 is_running = False
@@ -16,7 +17,6 @@ last_run = None
 def start_scheduler():
     global is_running, timer_seconds, accounts, groups, clips
     if not is_running:
-        # تحميل البيانات
         timer_value = database.get_setting("timer")
         timer_seconds = int(timer_value) if timer_value else 60
         accounts = database.get_accounts()
@@ -37,14 +37,12 @@ def stop_scheduler():
 def run_scheduler():
     global timer_seconds, accounts, groups, clips, current_account_index, last_run
     
-    # إعادة تعيين العدادات اليومية
     database.reset_daily_messages()
     
     while is_running:
         try:
             status = database.get_setting("status")
             if status == "true":
-                # تحديث البيانات
                 accounts = database.get_accounts()
                 groups = database.get_groups()
                 clips = database.get_clips()
@@ -60,7 +58,6 @@ def run_scheduler():
         except Exception as e:
             print(f"❌ خطأ: {e}")
         
-        # انتظار المؤقت
         for _ in range(timer_seconds):
             if not is_running:
                 break
@@ -78,11 +75,11 @@ def execute_next_message():
     
     account_id = account[0]
     phone = account[1]
+    session_string = account[2]
     messages_sent = account[4] or 0
     
-    # التحقق من الحد اليومي
     if messages_sent >= MAX_MESSAGES_PER_DAY:
-        print(f"⚠️ الحساب {phone} وصل للحد اليومي ({MAX_MESSAGES_PER_DAY})")
+        print(f"⚠️ الحساب {phone} وصل للحد اليومي")
         return
     
     # اختيار كروب عشوائي
@@ -90,7 +87,6 @@ def execute_next_message():
     for group in groups:
         group_id = group[0]
         group_link = group[1]
-        # تجنب الكروبات التي أرسل لها هذا الحساب اليوم
         if not database.has_sent_today(account_id, group_id):
             available_groups.append(group)
     
@@ -107,14 +103,17 @@ def execute_next_message():
     clip_id = clip[0]
     clip_text = clip[1]
     
-    # محاكاة الإرسال (هنا ستضيف كود الإرسال الحقيقي)
-    print(f"📨 [{phone}] → {group_link} : {clip_text[:50]}...")
+    # إرسال الرسالة فعلياً
+    success, result = send_message_sync(session_string, group_link, clip_text)
     
-    # تسجيل الإرسال
-    database.increment_messages(phone)
-    database.log_sent(account_id, group_id, clip_id)
-    
-    print(f"✅ تم الإرسال بواسطة {phone} (رسالة {messages_sent + 1}/{MAX_MESSAGES_PER_DAY})")
+    if success:
+        database.increment_messages(phone)
+        database.log_sent(account_id, group_id, clip_id)
+        print(f"✅ [{phone}] → {group_link} : {clip_text[:30]}...")
+    else:
+        print(f"❌ فشل إرسال من {phone} إلى {group_link}: {result}")
+        # إذا فشل الإرسال، نعطل الكروب مؤقتاً
+        database.deactivate_group(group_link)
 
 def set_timer(seconds):
     global timer_seconds
