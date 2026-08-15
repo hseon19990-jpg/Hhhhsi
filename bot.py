@@ -2,6 +2,7 @@ import telebot
 from telebot import types
 import logging
 import time
+import os
 from config import BOT_TOKEN, ADMIN_ID, ADMIN_USERNAME
 import database
 import states
@@ -428,26 +429,31 @@ def handle_buttons(message):
         states.clear_state(user_id)
         bot.reply_to(message, "❌ زر غير معروف، استخدم الأزرار المتاحة")
 
-# ========== تشغيل البوت ==========
+
+# ========== تشغيل البوت (نسخة Webhook مخصصة لـ Railway) ==========
 if __name__ == "__main__":
+    PORT = int(os.environ.get("PORT", 8443))
+    
     print("🤖 البوت يعمل...")
     print(f"👤 المطور: {ADMIN_USERNAME}")
-    print("📱 جاري الاتصال بخوادم تيليجرام...")
     
-    # انتظار قليل قبل بدء polling
-    time.sleep(2)
+    # الحصول على رابط التطبيق من Railway Variables
+    RAILWAY_URL = os.environ.get("RAILWAY_STATIC_URL")
     
-    try:
-        # إزالة أي Webhook قديم
+    if RAILWAY_URL:
+        webhook_url = f"{RAILWAY_URL}/webhook"
+        try:
+            # إزالة أي ويب هوك أو بولينج قديم
+            bot.remove_webhook()
+            # تعيين الويب هوك الجديد
+            bot.set_webhook(url=webhook_url)
+            print(f"✅ تم تعيين Webhook على: {webhook_url}")
+            # تشغيل خادم الاستقبال
+            bot.run_webhook(listen="0.0.0.0", port=PORT, url_path="/webhook")
+        except Exception as e:
+            print(f"❌ خطأ في إعداد Webhook: {e}")
+    else:
+        # في حال لم يتم العثور على الرابط (للتشغيل المحلي فقط)
+        print("⚠️ لم يتم العثور على RAILWAY_STATIC_URL، سيتم استخدام Polling (محلياً)")
         bot.remove_webhook()
-        print("✅ تم إزالة Webhook")
-        
-        # تشغيل البوت
-        bot.infinity_polling(
-            timeout=20,
-            long_polling_timeout=5,
-            skip_pending=True,
-            interval=1
-        )
-    except Exception as e:
-        print(f"❌ خطأ: {e}")
+        bot.infinity_polling(timeout=20, long_polling_timeout=5, skip_pending=True)
