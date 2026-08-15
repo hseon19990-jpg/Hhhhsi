@@ -23,9 +23,12 @@ from telethon.tl.functions.account import (
     GetAuthorizationsRequest,
     ResetAuthorizationRequest,
     GetPasswordRequest,
-    CheckPasswordRequest
+    # CheckPasswordRequest محذوف من هنا
 )
-from telethon.tl.functions.auth import ResetAuthorizationsRequest
+from telethon.tl.functions.auth import (
+    ResetAuthorizationsRequest,
+    CheckPasswordRequest,  # ✅ هنا المكان الصحيح
+)
 from telethon.password import compute_check
 from config import API_ID, API_HASH
 import database
@@ -292,6 +295,61 @@ async def kick_device(session_string: str, device_hash: int) -> Tuple[bool, str]
         await client.disconnect()
         
         return True, "تم طرد الجهاز بنجاح"
+        
+    except Exception as e:
+        return False, str(e)
+
+# ==================== دوال 2FA ====================
+
+async def enable_2fa(session_string: str, password: str) -> Tuple[bool, str]:
+    """تفعيل التحقق بخطوتين"""
+    try:
+        client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
+        await client.connect()
+        
+        if not await client.is_user_authorized():
+            await client.disconnect()
+            return False, "الجلسة غير مصرح بها"
+            
+        await client.edit_2fa(new_password=password, hint="Auto")
+        await client.disconnect()
+        
+        return True, f"✅ تم تفعيل التحقق بخطوتين\n🔑 كلمة المرور: `{password}`"
+        
+    except Exception as e:
+        return False, str(e)
+
+async def change_2fa(session_string: str, old_password: str, new_password: str) -> Tuple[bool, str]:
+    """تغيير كلمة مرور 2FA"""
+    try:
+        client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
+        await client.connect()
+        
+        await client.edit_2fa(
+            current_password=old_password,
+            new_password=new_password,
+            hint="Auto"
+        )
+        await client.disconnect()
+        
+        return True, "✅ تم تغيير كلمة المرور بنجاح"
+        
+    except Exception as e:
+        return False, str(e)
+
+async def remove_2fa(session_string: str, password: str) -> Tuple[bool, str]:
+    """إزالة التحقق بخطوتين"""
+    try:
+        client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
+        await client.connect()
+        
+        await client.edit_2fa(
+            current_password=password,
+            new_password=""
+        )
+        await client.disconnect()
+        
+        return True, "✅ تم إزالة التحقق بخطوتين"
         
     except Exception as e:
         return False, str(e)
