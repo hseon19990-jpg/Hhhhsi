@@ -9,7 +9,6 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # جدول الحسابات (مع رقم الهاتف والجلسة)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS accounts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,7 +20,6 @@ def init_db():
         )
     ''')
     
-    # جدول الكليشات
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS clips (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,7 +28,6 @@ def init_db():
         )
     ''')
     
-    # جدول الكروبات
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +37,6 @@ def init_db():
         )
     ''')
     
-    # جدول الإعدادات
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -48,7 +44,6 @@ def init_db():
         )
     ''')
     
-    # جدول سجل الإرسال (لمنع التكرار)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sent_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
