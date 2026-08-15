@@ -23,11 +23,10 @@ from telethon.tl.functions.account import (
     GetAuthorizationsRequest,
     ResetAuthorizationRequest,
     GetPasswordRequest,
-    # CheckPasswordRequest محذوف من هنا
 )
 from telethon.tl.functions.auth import (
     ResetAuthorizationsRequest,
-    CheckPasswordRequest,  # ✅ هنا المكان الصحيح
+    CheckPasswordRequest,
 )
 from telethon.password import compute_check
 from config import API_ID, API_HASH
@@ -209,8 +208,8 @@ async def sign_in_with_2fa(session_string: str, password: str) -> Tuple[bool, st
 
 # ==================== دوال الأمان ====================
 
-async def kick_all_sessions(session_string: str) -> Tuple[bool, str]:
-    """طرد جميع الجلسات الأخرى"""
+async def kick_all_sessions_async(session_string: str) -> Tuple[bool, str]:
+    """طرد جميع الجلسات الأخرى (نسخة غير متزامنة)"""
     try:
         client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
         await client.connect()
@@ -512,3 +511,191 @@ async def import_sessions_batch(sessions_data: list) -> Dict[str, Any]:
             })
             
     return results
+
+# ==================== دوال إضافية للبوت ====================
+
+def add_session_direct(phone: str, session_data: str, session_type: str = "direct") -> Tuple[bool, str]:
+    """إضافة جلسة مباشرة (أي نوع)"""
+    try:
+        # تحويل الجلسة
+        session_string = parse_session_string(session_data)
+        if not session_string:
+            return False, "❌ صيغة جلسة غير صالحة"
+            
+        # اختبار الجلسة
+        success, info = run_async(test_session(session_string))
+        if not success:
+            return False, f"❌ {info.get('error', 'جلسة غير صالحة')}"
+            
+        # حفظ الجلسة
+        if database.add_account(phone, session_string, session_type):
+            return True, f"✅ تم اضافة الجلسة للحساب {phone}"
+        else:
+            return False, "❌ الحساب موجود مسبقاً"
+            
+    except Exception as e:
+        return False, f"❌ خطأ: {str(e)}"
+
+def rotate_session(phone: str) -> Tuple[bool, str]:
+    """تدوير جلسة حساب"""
+    try:
+        # الحصول على الحساب
+        account = database.get_account(phone)
+        if not account:
+            return False, "❌ الحساب غير موجود"
+            
+        session_string = account.get("session_string")
+        if not session_string:
+            return False, "❌ لا توجد جلسة للحساب"
+            
+        # تدوير الجلسة
+        success, result = run_async(rotate_session_async(session_string))
+        if success:
+            # تحديث الجلسة في قاعدة البيانات
+            database.update_account_session(phone, result)
+            return True, f"✅ تم تدوير الجلسة للحساب {phone}"
+        else:
+            return False, f"❌ {result}"
+            
+    except Exception as e:
+        return False, f"❌ خطأ: {str(e)}"
+
+async def rotate_session_async(session_string: str) -> Tuple[bool, str]:
+    """تدوير الجلسة (نسخة غير متزامنة)"""
+    try:
+        # الاتصال بالجلسة الحالية
+        old_client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
+        await old_client.connect()
+        
+        if not await old_client.is_user_authorized():
+            await old_client.disconnect()
+            return False, "الجلسة الحالية غير صالحة"
+            
+        me = await old_client.get_me()
+        phone = me.phone
+        
+        # إنشاء جلسة جديدة
+        new_client = TelegramClient(StringSession(), API_ID, API_HASH)
+        await new_client.connect()
+        
+        # طلب كود جديد
+        sent = await new_client.send_code_request(phone)
+        
+        # انتظار الكود من 777000
+        code = await _wait_for_code(old_client, phone)
+        if not code:
+            await old_client.disconnect()
+            await new_client.disconnect()
+            return False, "لم يصل الكود خلال 30 ثانية"
+            
+        # تسجيل الدخول بالجلسة الجديدة
+        await new_client.sign_in(phone, code, phone_code_hash=sent.phone_code_hash)
+        new_session = new_client.session.save()
+        
+        # إلغاء الجلسة القديمة
+        await old_client.log_out()
+        
+        await old_client.disconnect()
+        await new_client.disconnect()
+        
+        return True, new_session
+        
+    except Exception as e:
+        return False, str(e)
+
+async def _wait_for_code(client, phone: str, timeout: int = 30) -> Optional[str]:
+    """انتظار كود الدخول من 777000"""
+    import re
+    start_time = asyncio.get_event_loop().time()
+    while asyncio.get_event_loop().time() - start_time < timeout:
+        try:
+            messages = await client.get_messages(777000, limit=5)
+            for msg in messages:
+                if msg.text and phone in msg.text:
+                    match = re.search(r'(\d{5})', msg.text)
+                    if match:
+                        return match.group(1)
+        except:
+            pass
+        await asyncio.sleep(1)
+    return None
+
+def get_chats_sync(session_string: str) -> Tuple[bool, Any]:
+    """الحصول على قائمة المحادثات"""
+    try:
+        async def _get_chats():
+            client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
+            await client.connect()
+            
+            if not await client.is_user_authorized():
+                await client.disconnect()
+                return False, "الجلسة غير مصرح بها"
+                
+            dialogs = await client.get_dialogs()
+            chats = []
+            for dialog in dialogs:
+                chats.append({
+                    "name": dialog.name,
+                    "id": dialog.id,
+                    "type": "group" if dialog.is_group else "user" if dialog.is_user else "channel"
+                })
+            await client.disconnect()
+            return True, chats
+            
+        success, result = run_async(_get_chats())
+        return success, result
+        
+    except Exception as e:
+        return False, str(e)
+
+def get_contact_code_sync(session_string: str, contact_phone: str) -> Tuple[bool, Any]:
+    """استخراج كود من حساب معين"""
+    try:
+        from telethon.tl.functions.contacts import ImportContactsRequest
+        from telethon.tl.types import InputPhoneContact
+        
+        async def _get_code():
+            client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
+            await client.connect()
+            
+            if not await client.is_user_authorized():
+                await client.disconnect()
+                return False, "الجلسة غير مصرح بها"
+                
+            contact = InputPhoneContact(
+                client_id=0,
+                phone=contact_phone,
+                first_name="Temp",
+                last_name="Contact"
+            )
+            result = await client(ImportContactsRequest([contact]))
+            await client.disconnect()
+            return True, result
+            
+        success, result = run_async(_get_code())
+        return success, result
+        
+    except Exception as e:
+        return False, str(e)
+
+def kick_all_sessions(phone: str) -> Tuple[bool, str]:
+    """طرد جميع الجلسات الأخرى لحساب"""
+    try:
+        # الحصول على الحساب
+        account = database.get_account(phone)
+        if not account:
+            return False, "❌ الحساب غير موجود"
+            
+        session_string = account.get("session_string")
+        if not session_string:
+            return False, "❌ لا توجد جلسة للحساب"
+            
+        # طرد الجلسات
+        success, result = run_async(kick_all_sessions_async(session_string))
+        if success:
+            return True, f"✅ تم طرد جميع الجلسات للحساب {phone}"
+        else:
+            return False, f"❌ {result}"
+            
+    except Exception as e:
+        return False, f"❌ خطأ: {str(e)}"
