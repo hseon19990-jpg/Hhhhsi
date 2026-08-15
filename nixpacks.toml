@@ -1,0 +1,8 @@
+[build]
+packages = ["python310"]
+
+[build.cmd]
+cmd = "pip install -r requirements.txt"
+
+[start]
+cmd = "python bot.py"
