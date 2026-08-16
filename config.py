@@ -1,6 +1,6 @@
 import os
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "توكن_البوت_هنا")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 TIMER_DEFAULT = 60
 DB_PATH = "data/database.db"
 MAX_MESSAGES_PER_DAY = 50

@@ -18,4 +18,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # تشغيل البوت
-CMD ["python", "bot.py"]
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "-u", "bot.py"]
